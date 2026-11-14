@@ -1,5 +1,20 @@
 import { test, expect, devices } from '@playwright/test';
 import { LocalMovement, movementTerrain, stickIntent } from '../../frontend/movement.js';
+import { advanceGait } from '../../frontend/arena.js';
+
+test('the stride advances across slow paints and settles when input stops', async ({}, info) => {
+  test.skip(info.project.name !== 'desktop', 'Runs the deterministic animation check once.');
+  const pose = { gait: 0, stride: 0 };
+  const phases = [];
+  for (let frame = 0; frame < 8; frame++) {
+    advanceGait(pose, .30, 3, 100, true);
+    phases.push(Math.floor(pose.stride * 4));
+  }
+  expect(phases).toEqual(expect.arrayContaining([0, 1, 2, 3]));
+  for (let frame = 0; frame < 4; frame++) advanceGait(pose, .08, 3, 100, false);
+  expect(pose.gait).toBeLessThan(.02);
+  expect(pose.stride).toBe(0);
+});
 
 test('older input acknowledgments preserve a new direction and a neutral stop', async ({}, info) => {
   test.skip(info.project.name !== 'desktop', 'Runs the deterministic predictor once.');
@@ -256,6 +271,7 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
 
 test('wizard alternates both boots and the contact pose when moving up', async ({ page }, info) => {
   test.skip(info.project.name !== 'iphone-webkit', 'Checks the rear walk cycle on the phone layout.');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   const network = monitor(page);
   await page.addInitScript(() => {
     const drawImage = CanvasRenderingContext2D.prototype.drawImage;

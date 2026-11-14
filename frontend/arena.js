@@ -27,6 +27,19 @@ const STRIDE_FRAMES = {
   side: ['side-pass', 'side', 'side-pass', 'side-other'],
 };
 
+export function advanceGait(position, forward, speed, frameMs, moving) {
+  // A slow paint can span several movement ticks. Cap corrections by elapsed time,
+  // so a legitimate low-frame-rate stride still advances while a snap stays bounded.
+  const elapsed = clamp(frameMs, 0, 150);
+  const travel = moving ? clamp(forward, 0, speed * (elapsed + 22) / 1000) : 0;
+  const effort = elapsed ? clamp(travel * 1000 / elapsed / speed, 0, 1) : 0;
+  position.gait += (effort - position.gait) * (1 - Math.exp(-elapsed / (effort ? 52 : 90)));
+  const stride = position.stride + travel / STRIDE_LENGTH;
+  const footfall = Math.floor(stride * 2) !== Math.floor(position.stride * 2);
+  position.stride = position.gait > .02 ? stride % 1 : 0;
+  return footfall;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -292,7 +305,8 @@ export class Arena {
     const ctx = this.ctx;
     const { width, height } = this.viewport || {};
     if (!width || !height) return;
-    const dt = this.frameTime === null ? 0 : clamp(time - this.frameTime, 0, 45);
+    const frameMs = this.frameTime === null ? 0 : time - this.frameTime;
+    const dt = clamp(frameMs, 0, 45);
     this.frameTime = time;
     const reduced = this.reducedMotion.matches;
     const pixelRatio = Math.min(devicePixelRatio || 1, 2);
@@ -316,12 +330,8 @@ export class Arena {
       position.facing = (own && this.local.facing) || player.facing || [0, 1];
       const [dx, dy] = position.facing;
       const forward = (position.drawn.x - previous.x) * dx + (position.drawn.y - previous.y) * dy;
-      const running = !world.countdown && player.alive && player.connected && !player.trapped && forward < .25;
-      const speed = running && dt ? clamp(forward * 1000 / dt / player.speed, 0, 1) : 0;
-      position.gait += (speed - position.gait) * (1 - Math.exp(-dt / (speed ? 52 : 75)));
-      const stride = position.stride + (running ? clamp(forward / STRIDE_LENGTH, 0, dt * .0026) : 0);
-      if (own && Math.floor(stride * 2) > Math.floor(position.stride * 2)) this.steps++;
-      position.stride = position.gait > .02 ? stride % 1 : 0;
+      const moving = !world.countdown && player.alive && player.connected && !player.trapped && (!own || this.local.pace > 0);
+      if (advanceGait(position, forward, player.speed, frameMs, moving) && own) this.steps++;
     }
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.fillStyle = STAGES[this.theme.floor].edge;
