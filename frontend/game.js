@@ -1,408 +1,622 @@
-/* Bong Bong Party - original 2007-style arena, 100% sprite/WAV kit runtime.
-   Authoritative game state arrives from QPyServe/FastAPI via WebSockets.
-   Never trust a browser for collisions, wins, items, or movement speed. */
+import { Arena, drawPreview } from './arena.js';
+import { ArcadeAudio, assetUrl, loadImages, readManifest } from './media.js';
+
 const $ = id => document.getElementById(id);
-const W=15,H=13,TILE=64,WIDTH=W*TILE,HEIGHT=H*TILE;
-const ROOT='/assets/';
-const LABELS={berry_pixie:'Berry Pixie',cloud_tech:'Cloud Tech',duckling:'Duckling',fox_scout:'Fox Scout',frog_kid:'Frog Kid',little_bat:'Little Bat',night_wizard:'Night Wizard',turtle_scholar:'Turtle Scholar'};
-const MAPS={village:['Làng Gỗ','wood','stone_pillar'],garden:['Vườn Nấm','grass','stone_pillar'],candy:['Đảo Kẹo','pink','gold_block'],winter:['Làng Tuyết','ice','stone_pillar'],castle:['Thành Cổ','cobble','stone_pillar'],desert:['Ốc Đảo','sand','gold_block'],moon:['Quảng Trường','stone','gold_block'],lagoon:['Biển Xanh','water','stone_pillar']};
-const ITEM_NAMES={extra_balloon:'Thêm bóng',water_range:'Sức nước',speed:'Tốc độ',skates:'Giày trượt',kick:'Đá bóng',glove:'Ném bóng',shield:'Khiên',remote:'Điều khiển nổ',star:'Ngôi sao'};
-const gameCanvas=$('gameCanvas'),c=gameCanvas.getContext('2d',{alpha:false});
-const session={nick:localStorage.getItem('bb_nick')||'',avatar:localStorage.getItem('bb_avatar')||'frog_kid',id:'',room:'',ws:null,world:null,prior:new Map(),snapAt:0,lastEvent:0,eventsReady:false,seq:0,retries:0,manualExit:false,keys:new Set(),touchDir:'',sentDir:'',lastSent:0,zoom:localStorage.getItem('bb_camera')!=='off',offline:false,rosterHash:'',countdown:-1};
-const pref={music:localStorage.getItem('bb_music')!=='off',sfx:localStorage.getItem('bb_sfx')!=='off',musicVolume:Number(localStorage.getItem('bb_music_vol')??55)/100,sfxVolume:Number(localStorage.getItem('bb_sfx_vol')??70)/100};
-const assets={manifest:null,images:new Map(),sounds:new Map(),errors:[],ready:false};
-const assetUrl=(category,name)=>`${ROOT}${category}/${name}`;
-function image(category,name){return assets.images.get(`${category}/${name}`)}
-function sound(name){return assets.sounds.get(name)}
-const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-function setStatus(text,good=false){$('serverStatus').classList.toggle('ok',good);$('serverStatus').innerHTML=`<span class="status-dot"></span> ${text}`}
-function toast(text,ms=2200){const t=$('gameToast');t.textContent=text;t.hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>t.hidden=true,ms)}
-function safeText(text){return String(text??'').replace(/[<>\x00-\x1f]/g,'').slice(0,120)}
-async function loadAssets(){
-  try{
-    const response=await fetch(assetUrl('','asset_manifest.json').replace('//asset_manifest','/asset_manifest'),{cache:'force-cache'});
-    if(!response.ok)throw Error(`Manifest HTTP ${response.status}`);
-    assets.manifest=await response.json();
-    const loaders=[];
-    for(const [cat, names] of Object.entries(assets.manifest.categories)){
-      if(!/0[1-8]_/.test(cat))continue;
-      for(const name of names){
-        if(cat==='08_audio'){
-          const wav=new Audio(assetUrl(cat,name));wav.preload='auto';
-          wav.addEventListener('error',()=>assets.errors.push(`${cat}/${name}`),{once:true});
-          assets.sounds.set(name.replace(/\.wav$/,''),wav);
-          // Decode audio lazily: do not delay a playable lobby for large WAV downloads.
-          wav.load();
-        }else{
-          const img=new Image();img.decoding='async';img.src=assetUrl(cat,name);
-          assets.images.set(`${cat}/${name}`,img);
-          loaders.push(img.decode().catch(()=>assets.errors.push(`${cat}/${name}`)));
-        }
-      }
+const names = {
+  berry_pixie: 'Bé Dâu', cloud_tech: 'Mây Xanh', duckling: 'Vịt Vàng', fox_scout: 'Cáo Cam',
+  frog_kid: 'Ếch Xanh', little_bat: 'Dơi Tím', night_wizard: 'Phù Thủy', turtle_scholar: 'Rùa Con',
+};
+const items = {
+  extra_balloon: 'Thêm bóng', water_range: 'Sức nước', speed: 'Tăng tốc', skates: 'Giày trượt',
+  kick: 'Đá bóng', glove: 'Găng ném', shield: 'Khiên', remote: 'Điều khiển nổ', star: 'Ngôi sao',
+};
+const directionKeys = {
+  ArrowUp: [0, -1], w: [0, -1], ArrowLeft: [-1, 0], a: [-1, 0],
+  ArrowDown: [0, 1], s: [0, 1], ArrowRight: [1, 0], d: [1, 0],
+};
+const directions = { up: [0, -1], left: [-1, 0], down: [0, 1], right: [1, 0] };
+const effects = {
+  bomb: 'balloon_place', inflate: 'balloon_inflate', splash: 'water_burst',
+  trap: 'trapped_in_bubble', rescue: 'rescue_teammate', pickup: 'pickup',
+  speed_boost: 'speed_boost', shield: 'pickup', kick: 'balloon_place',
+};
+const connectionErrors = {
+  4000: 'Phòng đang mở ở một thẻ khác.',
+  4401: 'Phiên đã hết hạn. Vui lòng tải lại trang.',
+  4403: 'Kết nối bị từ chối.',
+  4404: 'Không tìm thấy phòng.',
+  4409: 'Phòng đã đầy.',
+};
+function stored(key, fallback) {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, value); } catch {}
+}
+const initialAvatar = stored('bb_avatar', 'frog_kid');
+const state = {
+  avatar: names[initialAvatar] ? initialAvatar : 'frog_kid', nick: stored('bb_nick', ''),
+  room: '', id: '', socket: null, world: null, retries: 0, lastEvent: 0, seq: 0,
+  keys: new Set(), touch: null, overview: stored('bb_camera', 'on') === 'off',
+  pending: false, ready: false, chatIds: new Set(),
+};
+function volume(key, fallback) {
+  const value = Number(stored(key, fallback));
+  return Number.isFinite(value) ? Math.min(100, Math.max(0, value)) / 100 : fallback / 100;
+}
+const preferences = {
+  music: stored('bb_music', 'on') !== 'off', sfx: stored('bb_sfx', 'on') !== 'off',
+  musicVolume: volume('bb_music_vol', 55), sfxVolume: volume('bb_sfx_vol', 70),
+};
+const audio = new ArcadeAudio(preferences);
+const arena = new Arena($('gameCanvas'));
+let maps = {};
+
+function status(text, connected = false) {
+  $('serverStatus').textContent = text;
+  $('serverStatus').classList.toggle('ok', connected);
+}
+
+function toast(text, duration = 2400) {
+  const node = $('gameToast');
+  clearTimeout(toast.timer);
+  node.textContent = text;
+  node.hidden = false;
+  toast.timer = setTimeout(() => { node.hidden = true; }, duration);
+}
+
+function node(tag, text, className) {
+  const result = document.createElement(tag);
+  if (text !== undefined) result.textContent = text;
+  if (className) result.className = className;
+  return result;
+}
+
+function image(category, name, alt = '') {
+  const img = new Image();
+  img.src = assetUrl(category, name + '.png');
+  img.alt = alt;
+  return img;
+}
+
+function profile() {
+  state.nick = $('nickname').value.trim().replace(/[<>\x00-\x1f\x7f]/g, '').slice(0, 16) || state.nick || 'Khách nhỏ';
+  $('nickname').value = state.nick;
+  save('bb_nick', state.nick);
+}
+
+function chooseAvatar(avatar) {
+  state.avatar = avatar;
+  save('bb_avatar', avatar);
+  $('selectedAvatar').src = assetUrl('01_characters', avatar + '.png');
+  $('selectedAvatarName').textContent = names[avatar];
+  for (const button of $('avatarPicker').children) {
+    button.classList.toggle('selected', button.dataset.avatar === avatar);
+    button.setAttribute('aria-pressed', String(button.dataset.avatar === avatar));
+  }
+}
+
+async function publicRooms() {
+  const response = await fetch('/api/rooms', { cache: 'no-store' });
+  if (!response.ok) throw new Error('Không tải được phòng.');
+  return response.json();
+}
+
+async function refreshRooms() {
+  try {
+    const rooms = await publicRooms();
+    $('roomCount').textContent = `${rooms.length} phòng công khai`;
+    const list = $('roomList');
+    const key = JSON.stringify(rooms);
+    if (list.dataset.key === key) return;
+    list.dataset.key = key;
+    list.replaceChildren();
+    if (!rooms.length) {
+      list.append(node('p', 'Chưa có phòng. Chơi nhanh hoặc tạo phòng để mời bạn!', 'empty-list'));
     }
-    await Promise.all(loaders);
-    assets.ready=true;
-    if(assets.errors.length)console.warn('Unable to load game assets:',assets.errors);
-  }catch(err){
-    assets.errors.push('manifest: '+String(err));
-    console.error('Asset kit could not be loaded',err);
-    setStatus('Thiếu hình/âm thanh');
-  }
-}
-function audioUnlock(){
-  // Autoplay is forbidden until a user gesture; initialize on interaction only.
-  if(!assets.ready)return;
-  const bg=sound('original_retro_lobby_loop');
-  if(bg){bg.loop=true;bg.volume=pref.music?pref.musicVolume*.78:0;
-    if(bg.paused)bg.play().catch(()=>{});
-  }
-  // iOS Safari initializes the media elements while this gesture is active.
-  if(!audioUnlock.once){
-    audioUnlock.once=true;
-    for(const [key,wav] of assets.sounds){
-      if(key==='original_retro_lobby_loop')continue;
-      wav.muted=true;
-      const promise=wav.play();
-      if(promise)promise.then(()=>{wav.pause();wav.currentTime=0;wav.muted=false}).catch(()=>{wav.muted=false});
+    for (const room of rooms) {
+      const row = node('div', undefined, 'room-row');
+      const action = node('button', room.state === 'playing' ? 'Xem' : 'Vào', 'blue-button');
+      action.disabled = room.open === 0;
+      action.setAttribute('aria-label', `${action.textContent} phòng ${room.id}`);
+      action.addEventListener('click', () => enter(room.id));
+      row.append(node('strong', room.id), node('span', maps[room.map]?.name || room.map),
+        node('span', `${room.players}/${room.capacity} · ${room.mode === 'teams' ? 'Đội' : 'Tự do'}`), action);
+      list.append(row);
     }
+  } catch (error) {
+    $('roomCount').textContent = '';
+    $('roomList').dataset.key = '';
+    $('roomList').replaceChildren(node('p', error.message, 'empty-list'));
   }
 }
-function playSound(name){
-  if(!pref.sfx)return;
-  const original=sound(name);if(!original)return;
-  const a=original.cloneNode(true);a.volume=Math.min(1,pref.sfxVolume);
-  a.play().catch(()=>{});
-  a.onended=()=>{a.removeAttribute('src');a.load()};
-}
-function updateSound(){
-  $('musicToggle').classList.toggle('off',!pref.music);$('soundToggle').classList.toggle('off',!pref.sfx);
-  const bg=sound('original_retro_lobby_loop');
-  if(bg){bg.volume=pref.music?pref.musicVolume*.78:0;if(pref.music && audioUnlock.once && bg.paused)bg.play().catch(()=>{});}
-}
-function drawSprite(category,name,x,y,size=TILE,alpha=1,flip=false){
-  const img=image(category,name+'.png');
-  if(!img?.complete||!img.naturalWidth)return;
-  c.save();c.globalAlpha=alpha;
-  if(flip){c.translate(x+size,y);c.scale(-1,1);c.drawImage(img,0,0,size,size)}
-  else c.drawImage(img,x,y,size,size);
-  c.restore();
-}
-function renderMap(t){
-  c.setTransform(1,0,0,1,0,0);c.imageSmoothingEnabled=false;
-  c.clearRect(0,0,WIDTH,HEIGHT);
-  const world=session.world;
-  const floor=MAPS[world?.map??'village']?.[1]??'wood';
-  const solid=MAPS[world?.map??'village']?.[2]??'stone_pillar';
-  const me=world?.players?.find(p=>p.id===session.id);
-  const small=matchMedia('(max-width:760px)').matches;
-  // Mobile framing follows player; viewport remains fixed logical ratio, preventing collision drift.
-  if(small && session.zoom && world?.state==='playing' && me?.alive){
-    const viewW=9.4*TILE,viewH=viewW*H/W,scale=WIDTH/viewW;
-    const camX=Math.max(0,Math.min(WIDTH-viewW,me.x*TILE-viewW/2));
-    const camY=Math.max(0,Math.min(HEIGHT-viewH,me.y*TILE-viewH/2));
-    c.setTransform(scale,0,0,scale,-camX*scale,-camY*scale);
+
+async function findRoom(mode) {
+  if (state.pending || state.room) return;
+  audio.unlock();
+  state.pending = true;
+  try {
+    const path = mode === 'quick' ? '/api/match' : mode === 'practice' ? '/api/rooms?practice=true' : '/api/rooms';
+    const response = await fetch(path, { method: 'POST' });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || 'Không tạo được phòng.');
+    enter(result.id, true);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    state.pending = false;
   }
-  const demo=!world;
-  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    drawSprite('02_floor_tiles',floor,x*TILE,y*TILE);
+}
+
+function enter(rawCode, fromSearch = false) {
+  const code = String(rawCode).trim().toUpperCase();
+  if (!state.ready || state.room || (state.pending && !fromSearch)) return;
+  if (!/^[A-Z2-9]{6}$/.test(code)) {
+    toast('Mã phòng gồm 6 chữ cái hoặc số từ 2 đến 9.');
+    return;
   }
-  if(demo){for(let y=0;y<H;y++)for(let x=0;x<W;x++){
-    if(x===0||y===0||x===W-1||y===H-1||(x%2===0&&y%2===0))drawSprite('03_obstacles',solid,x*TILE,y*TILE);
-    else if((x*3+y*5)%7===0)drawSprite('03_obstacles','wood_crate',x*TILE,y*TILE);
-  }}else{
-    for(const [x,y] of world.walls??[])drawSprite('03_obstacles',solid,x*TILE,y*TILE);
-    for(const [x,y,type] of world.crates??[])drawSprite('03_obstacles',type||'wood_crate',x*TILE,y*TILE);
-    for(const [x,y,kind] of world.pickups??[]){
-      const wobble=Math.sin(t*.004+x*1.7)*3;
-      drawSprite('04_powerups',kind,x*TILE,y*TILE+wobble);
+  profile();
+  audio.unlock();
+  state.room = code;
+  state.retries = 0;
+  state.chatIds.clear();
+  state.inventoryKey = '';
+  $('shareRoom').hidden = false;
+  $('timer').textContent = '02:45';
+  $('chatMessages').replaceChildren();
+  $('currentRoom').textContent = code;
+  $('homeScreen').hidden = true;
+  $('gameScreen').hidden = false;
+  $('boardOverlay').hidden = false;
+  $('overlayTitle').textContent = 'Phòng chờ';
+  $('overlayDesc').textContent = '';
+  $('waitingNote').textContent = 'Đang kết nối phòng…';
+  $('overlayPlayers').replaceChildren();
+  $('roster').replaceChildren();
+  $('startGame').hidden = true;
+  $('readyButton').hidden = true;
+  history.replaceState({}, '', '?room=' + code);
+  window.scrollTo(0, 0);
+  connect();
+}
+
+function send(message) {
+  if (state.socket?.readyState !== WebSocket.OPEN) return false;
+  state.socket.send(JSON.stringify(message));
+  return true;
+}
+
+function leave(explicit = true) {
+  if (explicit) send({ type: 'leave' });
+  const old = state.socket;
+  state.socket = null;
+  old?.close();
+  state.room = '';
+  state.id = '';
+  state.world = null;
+  state.rosterKey = state.overlayKey = '';
+  clearInput();
+  arena.reset();
+  $('gameScreen').hidden = true;
+  $('arena').hidden = true;
+  $('mobileControls').hidden = true;
+  $('keyboardHelp').hidden = true;
+  $('statsPanel').hidden = true;
+  $('soundPanel').hidden = true;
+  $('audioSettings').setAttribute('aria-expanded', 'false');
+  document.body.classList.remove('in-match');
+  $('homeScreen').hidden = false;
+  history.replaceState({}, '', location.pathname);
+  status('Sẵn sàng', true);
+  refreshRooms();
+}
+
+function connect() {
+  if (!state.room) return;
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const query = new URLSearchParams({ name: state.nick, avatar: state.avatar });
+  const socket = new WebSocket(`${protocol}//${location.host}/ws/${state.room}?${query}`);
+  state.socket = socket;
+  status('Đang vào phòng…');
+  socket.addEventListener('message', event => {
+    if (state.socket !== socket) return;
+    const message = JSON.parse(event.data);
+    if (message.type === 'welcome') {
+      state.id = message.id;
+      state.retries = 0;
+      state.seq = 0;
+      state.lastEvent = 0;
+      state.firstSnapshot = true;
+      state.lastRevision = 0;
+      state.sentDirection = '';
+      status('Đã kết nối', true);
+    } else if (message.type === 'state' && message.revision > state.lastRevision) {
+      state.lastRevision = message.revision;
+      receive(message);
     }
-    for(const b of world.bombs??[]){
-      const age=(2.15-b.fuse)*1000;
-      const frame=Math.min(3,Math.max(0,Math.floor((age%660)/165)));
-      drawSprite('05_water_balloons',`balloon_0${frame}`,b.x*TILE,b.y*TILE);
-    }
-    for(const [x,y,ttl] of world.blasts??[]){
-      const idx=Math.max(0,Math.min(5,Math.floor((.49-ttl)/.49*6)));
-      drawSprite('06_water_blasts',`water_burst_0${idx}`,x*TILE,y*TILE);
-    }
-    const players=[...world.players].sort((a,b)=>a.y-b.y);
-    for(const p of players){
-      if(!p.alive && !p.trapped)continue;
-      let x=p.x,y=p.y;
-      // Short bounded extrapolation smooths 12Hz authoritative snapshots without teleporting.
-      if(!p.trapped && p.alive && p.connected){
-        const elapsed=Math.min(.085,Math.max(0,(performance.now()-session.snapAt)/1000));
-        const [dx,dy]=p.dir??[0,0];
-        if(Math.abs(dx)+Math.abs(dy)===1){x+=dx*p.speed*elapsed;y+=dy*p.speed*elapsed;}
-      }
-      const moving=p.dir && (p.dir[0]||p.dir[1]);
-      const bob=moving?Math.sin(t*.018+p.x)*2:0;
-      const spriteSize=64;
-      const px=x*TILE-1,py=y*TILE-8+bob;
-      if(p.id===session.id){
-        c.fillStyle='#fff459';c.strokeStyle='#03629e';c.lineWidth=2;
-        c.beginPath();c.ellipse(x*TILE,y*TILE+19,20,7,0,0,2*Math.PI);c.fill();c.stroke();
-      }
-      drawSprite('01_characters',p.avatar||'frog_kid',px-spriteSize/2,py-spriteSize/2,spriteSize,p.connected?1:.52,Boolean(p.dir?.[0]===-1));
-      if(p.trapped){
-        c.save();c.globalAlpha=.85;c.fillStyle='#63dfff73';c.strokeStyle='#c2ffff';c.lineWidth=3;
-        c.beginPath();c.arc(x*TILE,y*TILE-6,27,0,Math.PI*2);c.fill();c.stroke();c.restore();
-        drawSprite('06_water_blasts','water_burst_01',x*TILE-29,y*TILE-37,58,.7);
-      }
-      if(p.star){c.fillStyle='#ffe26b';c.font='bold 20px serif';c.fillText('✦',x*TILE+16,y*TILE-24)}
-      if(p.shield){c.strokeStyle='#ffef87';c.lineWidth=2;c.beginPath();c.arc(x*TILE,y*TILE-5,30,0,2*Math.PI);c.stroke()}
-      // Historical screenshots show names over heads.
-      const label=safeText(p.name);
-      c.save();c.font='bold 12px Verdana';c.textAlign='center';c.lineWidth=3;
-      c.strokeStyle='#124075';c.strokeText(label,x*TILE,y*TILE-39,95);
-      c.fillStyle='#fff';c.fillText(label,x*TILE,y*TILE-39,95);c.restore();
-    }
-  }
-  if(world?.state==='playing' && world.countdown>0){
-    c.save();c.setTransform(1,0,0,1,0,0);
-    c.fillStyle='#014a8a8f';c.fillRect(0,HEIGHT*.35,WIDTH,HEIGHT*.22);
-    c.textAlign='center';c.font='bold 90px Verdana';c.lineWidth=7;c.strokeStyle='#035199';c.strokeText(world.countdown,WIDTH/2,HEIGHT*.5);
-    c.fillStyle='#ffe65c';c.fillText(world.countdown,WIDTH/2,HEIGHT*.5);c.restore();
-  }
-}
-function render(){renderMap(performance.now());requestAnimationFrame(render)}
-function renderAvatarPicker(){
-  $('avatarPicker').replaceChildren();
-  for(const avatar of Object.keys(LABELS)){
-    const button=document.createElement('button');button.type='button';button.className='avatar-choice'+(session.avatar===avatar?' selected':'');button.title=LABELS[avatar];button.setAttribute('aria-label',LABELS[avatar]);button.setAttribute('aria-pressed',String(session.avatar===avatar));
-    const img=document.createElement('img');img.src=assetUrl('01_characters',avatar+'.png');img.alt='';button.append(img);
-    button.addEventListener('click',()=>{
-      audioUnlock();playSound('pickup');session.avatar=avatar;localStorage.setItem('bb_avatar',avatar);
-      $('selectedAvatar').src=img.src;$('selectedAvatarName').textContent=LABELS[avatar];
-      renderAvatarPicker();send({type:'avatar',value:avatar});
-    });$('avatarPicker').append(button);
-  }
-  $('selectedAvatar').src=assetUrl('01_characters',session.avatar+'.png');$('selectedAvatarName').textContent=LABELS[session.avatar];
-}
-function renderItemPreview(){const parent=$('itemPreview');parent.replaceChildren();for(const name of Object.keys(ITEM_NAMES)){
-  const img=document.createElement('img');img.src=assetUrl('04_powerups',name+'.png');img.alt=ITEM_NAMES[name];img.title=ITEM_NAMES[name];parent.append(img);
-}}
-function setScreen(game){$('homeScreen').hidden=game;$('gameScreen').hidden=!game;document.body.classList.toggle('in-game',game)}
-function rememberName(){session.nick=safeText($('nickname').value||session.nick||'Khách nhỏ').slice(0,16);$('nickname').value=session.nick;localStorage.setItem('bb_nick',session.nick)}
-async function refreshRooms(){
-  try{
-    const response=await fetch('/api/rooms',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);
-    const rooms=await response.json();const node=$('roomList');node.replaceChildren();
-    if(!rooms.length){const empty=document.createElement('div');empty.className='empty-list';empty.textContent='Chưa có phòng nào. Hãy tạo phòng đầu tiên!';node.append(empty);return}
-    for(const room of rooms){
-      const row=document.createElement('div');row.className='room-row';
-      const name=document.createElement('strong');name.textContent='#'+room.id;
-      const theme=document.createElement('span');theme.textContent=MAPS[room.map]?.[0]??'Đấu trường';
-      const stats=document.createElement('span');stats.className='room-state';stats.textContent=`${room.players}/8 · ${room.mode==='teams'?'Đội':'Tự do'}`;
-      const button=document.createElement('button');button.textContent=room.state==='playing'?'XEM':'VÀO';button.addEventListener('click',()=>joinRoom(room.id));
-      row.append(name,theme,stats,button);node.append(row);
-    }
-  }catch(e){console.warn('Could not load public rooms',e)}
-}
-async function createRoom(isPrivate){
-  rememberName();audioUnlock();
-  try{
-    const response=await fetch('/api/rooms'+(isPrivate?'?private=true':''),{method:'POST',credentials:'same-origin'});
-    if(!response.ok){const detail=await response.json();throw Error(detail.detail||'Không thể tạo phòng')}
-    const {id}=await response.json();joinRoom(id);
-  }catch(e){alert(e.message)}
-}
-async function quickPlay(){rememberName();audioUnlock();
-  try{
-    const rooms=await(await fetch('/api/rooms')).json();
-    const target=rooms.find(r=>r.state==='waiting'&&r.players<8);
-    if(target)return joinRoom(target.id);
-  }catch{}createRoom(false);
-}
-async function joinRoom(code){
-  code=String(code||'').trim().toUpperCase().replace(/[^A-Z2-9]/g,'').slice(0,6);
-  if(code.length!==6)return alert('Mã phòng gồm 6 ký tự!');
-  rememberName();audioUnlock();session.manualExit=false;session.room=code;
-  history.replaceState({},'',`?room=${code}`);setScreen(true);$('currentRoom').textContent=code;
-  $('boardOverlay').hidden=false;
-  connectSocket();
-}
-function connectSocket(){
-  if(!session.room || session.manualExit)return;
-  if(session.ws){try{session.ws.onclose=null;session.ws.close()}catch{}}
-  const protocol=location.protocol==='https:'?'wss':'ws';
-  const ws=new WebSocket(`${protocol}://${location.host}/ws/${session.room}?name=${encodeURIComponent(session.nick)}&avatar=${encodeURIComponent(session.avatar)}`);
-  session.ws=ws;setStatus('Đang vào phòng...');
-  ws.addEventListener('open',()=>{session.retries=0;session.seq=0;session.lastSent=0;session.sentDir='';setStatus('Đã kết nối',true)});
-  ws.addEventListener('message',e=>{
-    let m;try{m=JSON.parse(e.data)}catch{return}
-    if(m.type==='welcome'){
-      session.id=m.id;session.world=null;session.lastEvent=0;session.eventsReady=false;session.rosterHash='';
+  });
+  socket.addEventListener('close', event => {
+    if (state.socket !== socket) return;
+    clearInput();
+    if (connectionErrors[event.code] || state.retries === 9) {
+      const message = connectionErrors[event.code] || 'Không thể kết nối lại.';
+      leave(false);
+      toast(message, 4000);
       return;
     }
-    if(m.type==='state')receiveState(m);
-    if(m.type==='chat')addChat(m.name,m.text);
+    status('Đang kết nối lại…');
+    toast('Đang kết nối lại…');
+    const delay = Math.min(5500, 430 * 1.62 ** state.retries++);
+    setTimeout(() => {
+      if (state.socket === socket) connect();
+    }, delay);
   });
-  ws.addEventListener('close',event=>{
-    if(session.ws!==ws||session.manualExit)return;
-    setStatus('Mất kết nối');
-    if([4401,4404,4409,4403].includes(event.code)){
-      session.manualExit=true;alert(event.code===4401?'Phiên đã hết hạn. Hãy tải lại trang để nhận phiên mới.':event.code===4404?'Không tìm thấy phòng!':event.code===4409?'Phòng đã đầy!':'Kết nối bị từ chối');leaveRoom();return;
+}
+
+function receive(world) {
+  const previous = state.world;
+  state.world = world;
+  for (const event of world.events) {
+    if (event.id > state.lastEvent && (!state.firstSnapshot || event.type === 'chat')) handleEvent(event);
+    state.lastEvent = Math.max(event.id, state.lastEvent);
+  }
+  const first = state.firstSnapshot;
+  state.firstSnapshot = false;
+  if (world.countdown && world.countdown !== previous?.countdown) audio.play('countdown_tick');
+  if (!first && world.state === 'finished' && previous?.state !== 'finished') {
+    audio.play(winner(localPlayer(), world) ? 'victory_jingle' : 'defeat_jingle');
+  }
+  if (world.round !== previous?.round && world.state === 'playing') clearInput();
+  const active = world.state === 'playing';
+  const me = localPlayer();
+  $('arena').hidden = $('keyboardHelp').hidden = $('statsPanel').hidden = !active;
+  $('mobileControls').hidden = !active || me?.spectator;
+  $('boardOverlay').hidden = active;
+  $('shareRoom').hidden = world.practice;
+  document.body.classList.toggle('in-match', active);
+  if (active !== (previous?.state === 'playing')) window.scrollTo(0, 0);
+  const mins = String(Math.floor(world.time / 60)).padStart(2, '0');
+  $('timer').textContent = mins + ':' + String(world.time % 60).padStart(2, '0');
+  $('playerCounter').textContent = `${world.players.filter(player => player.connected).length} / ${world.practice ? 1 : 8}`;
+  if (active) arena.receive(world, maps[world.map], state.id);
+  else renderRoom(world);
+  renderRoster(world);
+  if (active) renderInventory(me);
+}
+
+function localPlayer() {
+  return state.world?.players.find(player => player.id === state.id);
+}
+
+function winner(player, world) {
+  return player && !player.spectator && (world.mode === 'teams' ? String(player.team) === world.winner : player.id === world.winner);
+}
+
+function handleEvent(event) {
+  if (event.type === 'chat') {
+    if (state.chatIds.has(event.id)) return;
+    state.chatIds.add(event.id);
+    const row = node('p');
+    row.append(node('b', event.name + ' '), document.createTextNode(event.text));
+    const log = $('chatMessages');
+    log.append(row);
+    if (log.children.length > 60) log.firstChild.remove();
+    if (state.chatIds.size > 120) state.chatIds.delete(state.chatIds.values().next().value);
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+  if (effects[event.type]) audio.play(effects[event.type]);
+  if (event.who !== state.id) return;
+  if (event.type === 'trap') toast(state.world.mode === 'teams' ? 'Bị nhốt! Chờ đồng đội cứu.' : 'Bạn bị nhốt trong bóng nước!');
+  if (event.type === 'rescue') toast('Đồng đội đã cứu bạn!');
+  if (event.type === 'out') toast('Bạn đã bị loại.');
+  if (event.type === 'pickup') toast('Nhặt được ' + items[event.kind], 1400);
+}
+
+function renderRoom(world) {
+  // Settings and focused inputs survive snapshots with no room changes.
+  const key = JSON.stringify([world.state, world.round, world.host, world.map, world.mode, world.winner,
+    world.players.map(p => [p.id, p.name, p.avatar, p.ready, p.connected, p.spectator, p.team])]);
+  if (state.overlayKey === key) return;
+  state.overlayKey = key;
+  const finished = world.state === 'finished';
+  const host = world.host === state.id;
+  const me = localPlayer();
+  const ready = $('readyButton'), start = $('startGame');
+  const connected = world.players.filter(player => player.connected);
+  const unready = connected.some(player => player.id !== state.id && !player.ready);
+  const enough = connected.length >= (world.practice ? 1 : 2);
+  $('overlayTitle').textContent = world.practice ? (finished ? 'Kết thúc tập chơi' : 'Tập chơi') :
+    !finished ? 'Phòng chờ' : world.winner === 'draw' ? 'Trận hòa' : winner(me, world) ? 'Chiến thắng!' : 'Kết thúc trận';
+  const winners = world.players.filter(player => winner(player, world));
+  $('overlayDesc').textContent = finished && winners.length ? winners.map(player => player.name).join(', ') : '';
+  $('mapPicker').value = world.map;
+  $('mapPicker').disabled = !host;
+  for (const button of $('modeButtons').children) {
+    button.classList.toggle('selected', button.dataset.mode === world.mode);
+    button.setAttribute('aria-pressed', String(button.dataset.mode === world.mode));
+    button.disabled = !host || world.practice;
+  }
+  drawPreview($('mapPreview'), maps[world.map], world);
+  const slots = [];
+  for (let index = 0; index < (world.practice ? 1 : 8); index++) {
+    const player = world.players[index];
+    const card = node('div', undefined, 'waiting-player');
+    if (!player) {
+      card.classList.add('empty');
+      card.textContent = 'Còn trống';
+    } else {
+      card.classList.toggle('winner', finished && winner(player, world));
+      card.classList.toggle('ready', player.ready);
+      const label = !player.connected ? 'Mất kết nối' : player.id === world.host ? 'Chủ phòng' : player.ready ? 'Sẵn sàng' : 'Chưa sẵn sàng';
+      card.append(image('01_characters', player.avatar), node('strong', player.name), node('small', label));
     }
-    const wait=Math.min(8000,500*Math.pow(1.65,session.retries++));toast('Đang kết nối lại…');setTimeout(()=>{if(!session.manualExit&&session.ws===ws)connectSocket()},wait);
+    slots.push(card);
+  }
+  $('overlayPlayers').replaceChildren(...slots);
+  ready.hidden = host;
+  ready.classList.toggle('sprite-ready', !me?.ready);
+  ready.classList.toggle('sprite-cancel', Boolean(me?.ready));
+  ready.setAttribute('aria-label', me?.ready ? 'Hủy sẵn sàng' : 'Sẵn sàng');
+  start.hidden = !host;
+  start.disabled = !enough || unready;
+  start.setAttribute('aria-label', finished ? 'Chơi lại' : 'Bắt đầu');
+  $('waitingNote').textContent = !host ? 'Chờ chủ phòng bắt đầu.' :
+    !enough ? 'Mời thêm người để bắt đầu.' : unready ? 'Chờ mọi người sẵn sàng.' :
+    finished ? 'Bấm Bắt đầu để chơi lại.' : '';
+}
+
+function renderRoster(world) {
+  const key = JSON.stringify([world.state, world.mode, world.host,
+    world.players.map(p => [p.id, p.avatar, p.name, p.team, p.score, p.trapped, p.alive, p.connected, p.spectator])]);
+  if (key === state.rosterKey) return;
+  state.rosterKey = key;
+  $('roster').replaceChildren(...world.players.map(player => {
+    const row = node('div', undefined, 'player-card');
+    row.classList.toggle('mine', player.id === state.id);
+    row.classList.toggle('team-one', world.mode === 'teams' && player.team === 1);
+    row.classList.toggle('dead', !player.alive && !player.spectator);
+    row.classList.toggle('trapped', player.trapped);
+    row.classList.toggle('disconnected', !player.connected);
+    const info = node('div', undefined, 'player-meta');
+    const status = !player.connected ? 'Mất kết nối' : player.spectator ? 'Đang xem' :
+      player.trapped ? 'Bị nhốt' : !player.alive ? 'Đã loại' : `${player.score} điểm`;
+    info.append(node('b', player.name + (player.id === world.host ? ' ★' : '')),
+      node('small', (world.mode === 'teams' ? `Đội ${player.team + 1} · ` : '') + status));
+    row.append(image('01_characters', player.avatar), info);
+    return row;
+  }));
+}
+
+function renderInventory(me) {
+  if (!me) return;
+  const owned = { ...me, speed: me.speed > 3, water_range: me.power > 2,
+    extra_balloon: me.capacity > 1, skates: me.skates };
+  const key = JSON.stringify([me.spectator, me.speed, me.power, me.capacity, me.skates, me.kick, me.glove, me.remote, me.shield, me.star]);
+  if (state.inventoryKey === key) return;
+  state.inventoryKey = key;
+  for (const img of $('inventory').children) img.style.opacity = owned[img.dataset.kind] ? '1' : '.45';
+  $('myStats').textContent = me.spectator ? 'Đang xem trận đấu' :
+    `Bóng ${me.capacity} · Sức nước ${me.power} · Tốc độ ${me.speed.toFixed(1)}`;
+  $('mobileThrow').disabled = !me.glove;
+  $('mobileRemote').disabled = !me.remote;
+}
+
+function move(force = false) {
+  if (state.world?.state !== 'playing') return;
+  const key = [...state.keys].at(-1);
+  const [dx, dy] = directions[state.touch?.dir] || directionKeys[key] || [0, 0];
+  const direction = dx + ',' + dy;
+  if (force || state.sentDirection !== direction || direction !== '0,0') {
+    state.sentDirection = direction;
+    send({ type: 'input', dx, dy, seq: ++state.seq });
+  }
+}
+
+function clearInput() {
+  state.keys.clear();
+  state.touch = null;
+  for (const button of $('dpad').children) button.classList.remove('pressed');
+  move(true);
+}
+
+function act(type) {
+  const me = localPlayer();
+  if (state.world?.state !== 'playing' || state.world.countdown || !me?.alive || me.trapped) return;
+  send({ type, round: state.world.round, seq: ++state.seq });
+}
+
+function updateAudioControls() {
+  $('musicToggle').setAttribute('aria-pressed', String(preferences.music));
+  $('soundToggle').setAttribute('aria-pressed', String(preferences.sfx));
+  audio.update();
+}
+
+function updateCameraButton() {
+  $('zoomMap').setAttribute('aria-pressed', String(state.overview));
+  $('zoomMap').textContent = state.overview ? 'Theo nhân vật' : 'Toàn bản đồ';
+}
+
+function bind() {
+  $('quickPlay').onclick = () => findRoom('quick');
+  $('createRoom').onclick = () => findRoom('public');
+  $('practice').onclick = () => findRoom('practice');
+  $('refreshRooms').onclick = refreshRooms;
+  $('leaveRoom').onclick = () => leave();
+  $('logo').onclick = () => { if (state.room) leave(); };
+  $('nickname').onchange = profile;
+  $('joinForm').onsubmit = event => { event.preventDefault(); enter($('roomCode').value); };
+  $('shareRoom').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      toast('Đã sao chép liên kết mời!');
+    } catch {
+      window.prompt('Liên kết mời', location.href);
+    }
+  };
+  $('readyButton').onclick = () => send({ type: 'ready', value: !localPlayer()?.ready });
+  $('startGame').onclick = () => send({ type: 'start' });
+  $('mapPicker').onchange = event => send({ type: 'map', value: event.target.value });
+  for (const button of $('modeButtons').children) button.onclick = () => send({ type: 'mode', value: button.dataset.mode });
+  $('chatForm').onsubmit = event => {
+    event.preventDefault();
+    const input = $('chatInput');
+    if (input.value.trim() && send({ type: 'chat', value: input.value.trim() })) input.value = '';
+  };
+  $('audioSettings').onclick = () => {
+    $('soundPanel').hidden = !$('soundPanel').hidden;
+    $('audioSettings').setAttribute('aria-expanded', String(!$('soundPanel').hidden));
+  };
+  $('musicToggle').onclick = () => {
+    preferences.music = !preferences.music;
+    save('bb_music', preferences.music ? 'on' : 'off');
+    updateAudioControls();
+  };
+  $('soundToggle').onclick = () => {
+    preferences.sfx = !preferences.sfx;
+    save('bb_sfx', preferences.sfx ? 'on' : 'off');
+    updateAudioControls();
+    audio.play('pickup');
+  };
+  for (const [id, key, store] of [['musicVolume', 'musicVolume', 'bb_music_vol'], ['sfxVolume', 'sfxVolume', 'bb_sfx_vol']]) {
+    $(id).value = preferences[key] * 100;
+    $(id).oninput = event => {
+      preferences[key] = Number(event.target.value) / 100;
+      save(store, event.target.value);
+      audio.update();
+    };
+  }
+  $('zoomMap').onclick = () => {
+    state.overview = !state.overview;
+    save('bb_camera', state.overview ? 'off' : 'on');
+    updateCameraButton();
+  };
+  updateCameraButton();
+  bindControls();
+}
+
+function bindControls() {
+  function touchDirection(event) {
+    const pad = $('dpad');
+    const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-dir]');
+    if (hit && pad.contains(hit)) state.touch.dir = hit.dataset.dir;
+    else {
+      const rect = pad.getBoundingClientRect();
+      const x = event.clientX - rect.left - rect.width / 2, y = event.clientY - rect.top - rect.height / 2;
+      state.touch.dir = Math.hypot(x, y) < 10 ? '' : Math.abs(x) > Math.abs(y) ?
+        (x < 0 ? 'left' : 'right') : (y < 0 ? 'up' : 'down');
+    }
+    for (const button of pad.children) button.classList.toggle('pressed', button.dataset.dir === state.touch.dir);
+    move();
+  }
+  $('dpad').addEventListener('pointerdown', event => {
+    if (state.touch || event.button !== 0) return;
+    event.preventDefault();
+    state.touch = { id: event.pointerId, dir: '' };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    touchDirection(event);
   });
-}
-function send(payload){if(session.ws?.readyState===WebSocket.OPEN){session.ws.send(JSON.stringify(payload));return true}return false}
-function receiveState(world){
-  const prev=session.world;session.world=world;session.snapAt=performance.now();
-  if(!session.eventsReady){session.lastEvent=Math.max(0,...(world.events??[]).map(e=>e.id??0));session.eventsReady=true;}
-  else for(const event of world.events??[]){if(event.id>session.lastEvent){handleEvent(event);session.lastEvent=event.id}}
-  if(world.state==='playing' && world.countdown!==session.countdown && world.countdown>0){
-    playSound('countdown_tick');
+  $('dpad').addEventListener('pointermove', event => {
+    if (state.touch?.id === event.pointerId) touchDirection(event);
+  });
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    $('dpad').addEventListener(type, event => {
+      if (state.touch?.id !== event.pointerId) return;
+      state.touch = null;
+      for (const button of $('dpad').children) button.classList.remove('pressed');
+      move(true);
+    });
   }
-  session.countdown=world.countdown;
-  const mins=String(Math.floor(world.time/60)).padStart(2,'0');const secs=String(world.time%60).padStart(2,'0');$('timer').textContent=`${mins}:${secs}`;
-  $('currentRoom').textContent=world.room;
-  $('playerCounter').textContent=`${world.players.filter(p=>p.connected).length} / 8`;
-  renderOverlay();
-  const rosterKey=JSON.stringify(world.players.map(p=>[p.id,p.name,p.avatar,p.team,p.alive,p.trapped,p.ready,p.connected,p.spectator,p.score]));
-  if(rosterKey!==session.rosterHash){session.rosterHash=rosterKey;renderRoster()}
-  renderInventory();
-  if(prev?.state!==world.state){
-    if(world.state==='playing'){playSound('countdown_tick');session.keys.clear();sendInput(true)}
-    if(world.state==='finished')playResult(world);
+  for (const [id, action] of [['mobileBomb', 'bomb'], ['mobileThrow', 'throw'], ['mobileRemote', 'detonate']]) {
+    $(id).addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      audio.unlock();
+      act(action);
+    });
+    $(id).addEventListener('click', event => { if (!event.detail) act(action); });
+  }
+  window.addEventListener('keydown', event => {
+    if (event.target.matches?.('input, textarea, select') || state.world?.state !== 'playing' ||
+      event.ctrlKey || event.metaKey || event.altKey) return;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    const action = { ' ': 'bomb', r: 'throw', e: 'detonate' }[key];
+    if (action || directionKeys[key]) {
+      event.preventDefault();
+      if (event.repeat) return;
+      if (action) act(action);
+      else { state.keys.add(key); move(true); }
+    }
+  });
+  window.addEventListener('keyup', event => {
+    if (state.keys.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key)) move(true);
+  });
+  window.addEventListener('blur', clearInput);
+  window.addEventListener('pagehide', clearInput);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearInput(); });
+  document.addEventListener('focusin', event => { if (event.target.matches('input, select, textarea')) clearInput(); });
+  document.addEventListener('click', () => audio.unlock(), { capture: true });
+  window.addEventListener('keydown', () => audio.unlock(), { capture: true });
+  setInterval(move, 100);
+}
+
+async function boot() {
+  bind();
+  try {
+    const [manifest, guest, catalog] = await Promise.all([
+      readManifest(),
+      fetch('/api/session', { cache: 'no-store' }).then(response => {
+        if (!response.ok) throw new Error('Không kết nối được máy chủ.');
+        return response.json();
+      }),
+      fetch('/api/assets').then(response => response.json()),
+    ]);
+    audio.prepare(manifest.categories['08_audio']);
+    await loadImages(manifest);
+    maps = catalog.maps;
+    for (const avatar of catalog.avatars) {
+      const button = node('button', undefined, 'avatar-choice');
+      button.type = 'button';
+      button.dataset.avatar = avatar;
+      button.title = names[avatar];
+      button.setAttribute('aria-label', names[avatar]);
+      button.append(image('01_characters', avatar));
+      button.onclick = () => { chooseAvatar(avatar); audio.play('pickup'); };
+      $('avatarPicker').append(button);
+    }
+    chooseAvatar(state.avatar);
+    for (const [kind, title] of Object.entries(items)) {
+      const img = image('04_powerups', kind, title);
+      img.title = title;
+      img.dataset.kind = kind;
+      $('itemPreview').append(img);
+      $('inventory').append(img.cloneNode());
+    }
+    for (const [id, map] of Object.entries(maps)) {
+      const option = node('option', map.name);
+      option.value = id;
+      $('mapPicker').append(option);
+    }
+    state.nick = state.nick || guest.suggestedName;
+    $('nickname').value = state.nick;
+    state.ready = true;
+    for (const id of ['nickname', 'quickPlay', 'createRoom', 'practice', 'joinRoom']) $(id).disabled = false;
+    status('Sẵn sàng', true);
+    refreshRooms();
+    setInterval(() => { if (!state.room && !document.hidden) refreshRooms(); }, 5000);
+    const requestedRoom = new URLSearchParams(location.search).get('room');
+    if (requestedRoom) enter(requestedRoom);
+    function frame(time) {
+      arena.render(time, state.overview);
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  } catch (error) {
+    console.error(error);
+    status('Không tải được trò chơi');
+    toast('Không tải được trò chơi. Hãy thử tải lại trang.', 5000);
   }
 }
-function handleEvent(e){
-  const key=e.type;
-  const sounds={bomb:'balloon_place',inflate:'balloon_inflate',splash:'water_burst',trap:'trapped_in_bubble',rescue:'rescue_teammate',pickup:'pickup',speed_boost:'speed_boost',shield:'pickup',kick:'balloon_place'};
-  if(sounds[key])playSound(sounds[key]);
-  if(key==='trap' && e.who===session.id)toast('Bạn bị nhốt! Chờ đồng đội cứu!');
-  if(key==='rescue' && e.who===session.id)toast('Được cứu rồi!');
-  if(key==='pickup' && e.who===session.id)toast('Nhặt được: '+(ITEM_NAMES[e.kind]||e.kind));
-  if(key==='disconnect')toast('Một người chơi mất kết nối');
-}
-function playResult(w){const me=w.players.find(p=>p.id===session.id);let win=false;if(me)win=w.mode==='teams'?String(me.team)===w.winner:me.id===w.winner;
-  if(win){playSound('victory_jingle');toast('CHIẾN THẮNG! Trận quá hay!',4000)}
-  else{playSound('defeat_jingle');toast(w.winner==='draw'?'HÒA!':'HẸN TRẬN SAU!',4000)}
-}
-function renderOverlay(){
-  const w=session.world;if(!w)return;
-  const overlay=$('boardOverlay');overlay.hidden=w.state==='playing';
-  if(w.state==='playing')return;
-  const me=w.players.find(p=>p.id===session.id),host=w.host===session.id;
-  $('overlayTitle').textContent=w.state==='finished'?(w.winner==='draw'?'TRẬN HÒA!':'KẾT THÚC TRẬN!'):'SẴN SÀNG CHƠI CHƯA?';
-  $('overlayDesc').textContent=w.state==='finished'?'Cùng chơi lại ván nữa nhé!':'Chọn bản đồ, chờ bạn bè vào và sẵn sàng.';
-  $('mapPicker').value=w.map||'village';$('mapPicker').disabled=!host;
-  for(const button of $('modeButtons').querySelectorAll('button')){
-    button.classList.toggle('selected',button.dataset.mode===w.mode);button.disabled=!host;
-  }
-  const parent=$('overlayPlayers');parent.replaceChildren();
-  for(let i=0;i<8;i++){
-    const p=w.players[i];const card=document.createElement('div');card.className='waiting-player'+(p?'':' empty');
-    if(p){const img=document.createElement('img');img.src=assetUrl('01_characters',p.avatar+'.png');img.alt='';
-      const name=document.createElement('strong');name.textContent=p.name;
-      const status=document.createElement('small');status.textContent=p.connected?(p.ready?'SẴN SÀNG':'CHƯA SẴN SÀNG'):'MẤT MẠNG';
-      card.append(img,name,status);
-    }else card.textContent='CHỜ BẠN';
-    parent.append(card);
-  }
-  const ready=$('readyButton'),start=$('startGame');
-  ready.hidden=host;ready.classList.toggle('sprite-cancel',Boolean(me?.ready));ready.classList.toggle('sprite-ready',!me?.ready);
-  ready.textContent=me?.ready?'HỦY':'SẴN SÀNG';
-  start.hidden=!host;start.textContent=w.state==='finished'?'CHƠI LẠI':'BẮT ĐẦU';
-  const anyUnready=w.players.some(p=>p.id!==session.id&&p.connected&&!p.ready);
-  start.disabled=anyUnready;
-  $('waitingNote').textContent=host?(anyUnready?'Hãy chờ tất cả bạn bè sẵn sàng.':'Bạn là chủ phòng. Bấm bắt đầu khi đã sẵn sàng!'):'Đang chờ chủ phòng bắt đầu trận đấu.';
-}
-function renderRoster(){
-  const node=$('roster');node.replaceChildren();const w=session.world;if(!w)return;
-  for(const p of w.players){const row=document.createElement('div');row.className='player-card'+(p.id===session.id?' mine':'')+(!p.alive&&!p.spectator?' dead':'')+(p.trapped?' trapped':'')+(!p.connected?' disconnected':'');
-    const img=document.createElement('img');img.src=assetUrl('01_characters',p.avatar+'.png');img.alt='';
-    const info=document.createElement('div');info.className='player-meta';const name=document.createElement('b');name.textContent=p.name+(p.id===w.host?' ★':'');
-    const line=document.createElement('small');line.textContent=`${w.mode==='teams'?'Đội '+(p.team+1)+' · ':''}${p.score} điểm · ${p.spectator?'Đang xem':!p.connected?'Mất kết nối':p.trapped?'Bị nhốt':!p.alive?'Đã loại':w.state==='waiting'?(p.ready?'Sẵn sàng':'Đang chờ'):'Đang chơi'}`;
-    info.append(name,line);row.append(img,info);node.append(row);
-  }
-}
-function renderInventory(){
-  const w=session.world,me=w?.players?.find(p=>p.id===session.id),parent=$('inventory');
-  if(!me)return;
-  if(parent.childElementCount!==9){parent.replaceChildren();for(const kind of Object.keys(ITEM_NAMES)){const img=document.createElement('img');img.src=assetUrl('04_powerups',kind+'.png');img.title=ITEM_NAMES[kind];img.alt=ITEM_NAMES[kind];img.dataset.kind=kind;parent.append(img);}}
-  for(const img of parent.children){const kind=img.dataset.kind;
-    const owned=kind==='speed'?me.speed>3:kind==='water_range'?me.power>2:kind==='extra_balloon'?me.capacity>1:kind==='skates'?me.speed>3.7:kind==='kick'?me.kick:kind==='glove'?me.glove:kind==='shield'?me.shield:kind==='remote'?me.remote:kind==='star'?me.star:false;
-    img.style.opacity=owned?'1':'.45';
-  }
-  $('myStats').textContent=`Bóng: ${me.capacity}  ·  Sức nước: ${me.power}  ·  Tốc độ: ${me.speed.toFixed(1)}${me.shield?'  ·  Khiên: '+me.shield:''}`;
-  $('mobileThrow').disabled=!me.glove;$('mobileRemote').disabled=!me.remote;
-}
-function addChat(name,text){const row=document.createElement('p');const b=document.createElement('b');b.textContent=safeText(name)+': ';row.append(b,document.createTextNode(safeText(text)));
-  const node=$('chatMessages');node.append(row);while(node.children.length>80)node.firstChild.remove();node.scrollTop=node.scrollHeight;
-}
-function currentDir(){let dx=0,dy=0;const k=session.keys;
-  if(k.has('ArrowLeft')||k.has('a'))dx=-1;
-  if(k.has('ArrowRight')||k.has('d'))dx=1;
-  if(!dx){if(k.has('ArrowUp')||k.has('w'))dy=-1;if(k.has('ArrowDown')||k.has('s'))dy=1}
-  if(session.touchDir){const t=session.touchDir;if(t==='left'){dx=-1;dy=0}else if(t==='right'){dx=1;dy=0}else if(t==='up'){dx=0;dy=-1}else if(t==='down'){dx=0;dy=1}}
-  return [dx,dy];
-}
-function sendInput(force=false){
-  if(session.world?.state!=='playing')return;
-  const [dx,dy]=currentDir(),dir=dx+','+dy,now=performance.now();
-  // Keep-alive inputs guarantee stable movement after bursty network tick arrival.
-  if(force||dir!==session.sentDir||now-session.lastSent>85){session.sentDir=dir;session.lastSent=now;send({type:'input',seq:++session.seq,dx,dy})}
-}
-function leaveRoom(){session.manualExit=true;if(session.ws){session.ws.onclose=null;session.ws.close();session.ws=null}
-  session.room='';session.world=null;session.id='';session.eventsReady=false;session.rosterHash='';session.keys.clear();session.touchDir='';
-  history.replaceState({},'',location.pathname);setScreen(false);setStatus('Sẵn sàng',true);refreshRooms();
-}
-async function boot(){
-  setStatus('Đang tải tài nguyên...');
-  $('nickname').value=session.nick;$('musicVolume').value=Math.round(pref.musicVolume*100);$('sfxVolume').value=Math.round(pref.sfxVolume*100);
-  updateSound();
-  try{const r=await fetch('/api/session',{credentials:'same-origin'});if(!r.ok)throw Error('Session unavailable');const s=await r.json();
-    if(!session.nick){session.nick=s.suggestedName;$('nickname').value=session.nick}
-    setStatus('Sẵn sàng',true);
-  }catch{setStatus('Mất kết nối')}
-  await loadAssets();
-  renderAvatarPicker();renderItemPreview();refreshRooms();
-  setInterval(()=>{if($('homeScreen').hidden)return;refreshRooms()},6500);
-  const requested=new URLSearchParams(location.search).get('room');if(requested&&requested.length===6)joinRoom(requested);
-  requestAnimationFrame(render);
-}
-$('quickPlay').addEventListener('click',quickPlay);
-$('createRoom').addEventListener('click',()=>createRoom(true));
-$('practice').addEventListener('click',()=>createRoom(true));
-$('joinForm').addEventListener('submit',e=>{e.preventDefault();joinRoom($('roomCode').value)});
-$('refreshRooms').addEventListener('click',refreshRooms);
-$('leaveRoom').addEventListener('click',leaveRoom);
-$('logo').addEventListener('click',()=>{if(session.room && !confirm('Rời phòng hiện tại?'))return;leaveRoom()});
-$('readyButton').addEventListener('click',()=>{audioUnlock();const me=session.world?.players.find(p=>p.id===session.id);send({type:'ready',value:!me?.ready});playSound('pickup')});
-$('startGame').addEventListener('click',()=>{audioUnlock();send({type:'start'})});
-$('mapPicker').addEventListener('change',e=>send({type:'map',value:e.target.value}));
-for(const button of $('modeButtons').querySelectorAll('button'))button.addEventListener('click',()=>send({type:'mode',value:button.dataset.mode}));
-$('shareRoom').addEventListener('click',()=>{const url=location.href;const copy=navigator.clipboard?.writeText(url);
-  Promise.resolve(copy).then(()=>toast('Đã sao chép liên kết phòng!')).catch(()=>prompt('Link phòng:',url));
-});
-$('chatForm').addEventListener('submit',e=>{e.preventDefault();const input=$('chatInput'),txt=input.value.trim();if(txt){send({type:'chat',value:txt});input.value=''}});
-$('musicToggle').addEventListener('click',()=>{audioUnlock();pref.music=!pref.music;localStorage.setItem('bb_music',pref.music?'on':'off');updateSound()});
-$('soundToggle').addEventListener('click',()=>{audioUnlock();pref.sfx=!pref.sfx;localStorage.setItem('bb_sfx',pref.sfx?'on':'off');updateSound();if(pref.sfx)playSound('pickup')});
-$('musicVolume').addEventListener('input',e=>{audioUnlock();pref.musicVolume=Number(e.target.value)/100;localStorage.setItem('bb_music_vol',e.target.value);updateSound()});
-$('sfxVolume').addEventListener('input',e=>{pref.sfxVolume=Number(e.target.value)/100;localStorage.setItem('bb_sfx_vol',e.target.value)});
-$('zoomMap').addEventListener('click',()=>{session.zoom=!session.zoom;localStorage.setItem('bb_camera',session.zoom?'on':'off')});
-$('mobileBomb').addEventListener('pointerdown',e=>{e.preventDefault();audioUnlock();send({type:'bomb'})});
-$('mobileThrow').addEventListener('pointerdown',e=>{e.preventDefault();send({type:'throw'})});
-$('mobileRemote').addEventListener('pointerdown',e=>{e.preventDefault();send({type:'detonate'})});
-for(const button of document.querySelectorAll('.dpad button')){
-  const release=e=>{e.preventDefault();button.classList.remove('pressed');if(session.touchDir===button.dataset.dir)session.touchDir='';sendInput(true)};
-  button.addEventListener('pointerdown',e=>{e.preventDefault();button.setPointerCapture(e.pointerId);session.touchDir=button.dataset.dir;button.classList.add('pressed');sendInput(true)});
-  button.addEventListener('pointerup',release);button.addEventListener('pointercancel',release);button.addEventListener('lostpointercapture',release);
-}
-window.addEventListener('keydown',e=>{
-  if(document.activeElement?.matches('input, textarea, select'))return;
-  const key=e.key.length===1?e.key.toLowerCase():e.key;
-  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ','w','a','s','d','r','e'].includes(key))e.preventDefault();
-  if(key===' ' && !e.repeat){audioUnlock();send({type:'bomb'});return}
-  if(key==='r'&&!e.repeat){send({type:'throw'});return}
-  if(key==='e'&&!e.repeat){send({type:'detonate'});return}
-  session.keys.add(key);sendInput(true);
-});
-window.addEventListener('keyup',e=>{const key=e.key.length===1?e.key.toLowerCase():e.key;session.keys.delete(key);sendInput(true)});
-window.addEventListener('blur',()=>{session.keys.clear();session.touchDir='';sendInput(true)});
-window.addEventListener('pagehide',()=>{session.keys.clear();session.touchDir='';sendInput(true)});
-setInterval(()=>sendInput(),55);
+
+updateAudioControls();
 boot();

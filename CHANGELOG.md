@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — match and mobile release
+
+- Added a compact Vietnamese lobby, separate room slots with a map preview and a viewport-fitted arena.
+- Fixed countdown input, reconnect sequencing, readiness, spectator scoring and shared-crate chain reactions.
+- Added atomic quick matching, a dedicated practice room and direction-aware glove throws.
+- Served all WAV files through QPyServe's FastAPI app and switched playback to Web Audio.
+- Added browser coverage for two-person matches, mobile touch, WAV decoding, reconnect and rematch.
+
 ## 1.0.0 — design-kit integration
 
 - Integrated every playable PNG/WAV provided with the original design kit.

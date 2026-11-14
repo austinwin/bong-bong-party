@@ -18,6 +18,8 @@ EXPECTED_COUNTS={'01_characters':8,'02_floor_tiles':8,'03_obstacles':10,
 def make_room(players=2, mode='solo'):
     room=Room('ABCDEF','g0',mode=mode)
     room.players={f'g{i}':Player(f'p{i}',f'P{i}',avatar=AVATARS[i]) for i in range(players)}
+    for player in room.players.values():
+        player.socket = object()
     assert room.start('g0',100.0)
     room.countdown_end=100
     room.crates=set()
@@ -102,11 +104,11 @@ def test_remote_trigger_only_owners_remote_balloons():
 
 
 def test_throw_requires_glove_and_finds_free_landing_tile():
-    r=make_room();p=r.players['g0'];p.x=p.y=1.5;p.dx=1
+    r=make_room();p=r.players['g0'];p.x=p.y=1.5;p.facing=(1, 0)
     assert not r.place_bomb(p,100,thrown=True)
     p.throws=True
     assert r.place_bomb(p,100.5,thrown=True)
-    assert any(x>=2 for x,y in r.bombs)
+    assert (4, 1) in r.bombs and r.bombs[(4, 1)].launched_from == (1, 1)
 
 
 def test_kick_moves_bomb_one_cell_without_overlap():
@@ -163,25 +165,82 @@ def test_message_protocol_host_only_map_and_ready():
             assert wa.receive_json()['type']=='welcome';wa.receive_json()
             with b.websocket_connect(f'/ws/{code}?name=Joiner&avatar=duckling') as wb:
                 assert wb.receive_json()['type']=='welcome';wb.receive_json()
-                wb.send_json({'type':'map','value':'candy'})
-                assert ROOMS[code].map_id=='village'
-                wa.send_json({'type':'map','value':'candy'})
-                # Wait for handler to read and process the frame.
-                for _ in range(12):
-                    if wa.receive_json().get('map')=='candy':break
-                assert ROOMS[code].map_id=='candy'
-                wb.send_json({'type':'ready','value':False})
-                for _ in range(12):
-                    if not ROOMS[code].players[next(k for k in ROOMS[code].players if k!=ROOMS[code].host)].ready:break
-                    wb.receive_json()
-                wa.send_json({'type':'start'})
-                assert ROOMS[code].state=='waiting'
-                wb.send_json({'type':'ready','value':True})
-                for _ in range(12):
-                    if ROOMS[code].players[next(k for k in ROOMS[code].players if k!=ROOMS[code].host)].ready:break
-                    wb.receive_json()
-                wa.send_json({'type':'start'})
-                for _ in range(15):
-                    if wa.receive_json().get('state')=='playing':break
-                assert ROOMS[code].state=='playing'
+                assert not next(p for p in ROOMS[code].players.values() if p.name == 'Joiner').ready
+                wb.send_json({'type': 'map', 'value': 'candy'})
+                wa.send_json({'type': 'map', 'value': 'winter'})
+                while wa.receive_json()['map'] != 'winter':
+                    pass
+                wa.send_json({'type': 'start'})
+                wb.send_json({'type': 'chat', 'value': 'Chào bạn'})
+                while not any(e['type'] == 'chat' for e in wa.receive_json()['events']):
+                    pass
+                assert ROOMS[code].state == 'waiting'
+                wb.send_json({'type': 'ready', 'value': True})
+                while not all(p['ready'] for p in wa.receive_json()['players']):
+                    pass
+                wa.send_json({'type': 'start'})
+                while wa.receive_json()['state'] != 'playing':
+                    pass
+                assert ROOMS[code].state == 'playing'
     ROOMS.clear()
+
+
+def test_countdown_freezes_actions_and_preserves_full_round_clock():
+    r = make_room()
+    p = r.players['g0']
+    r.countdown_end = 103
+    p.dx = 1
+    p.last_input = 101
+    p.remote = True
+    r.update(.03, 101)
+    assert p.x == 1.5
+    assert not r.place_bomb(p, 101)
+    assert not r.remote_detonate(p, 101)
+    assert r.snapshot(101)['time'] == 165
+    assert r.place_bomb(p, 103)
+
+
+def test_shared_crate_stops_all_rays_in_a_chain():
+    r = make_room()
+    r.crates = {(5, 1)}
+    r.bombs = {(1, 1): Bomb(1, 1, 'p0', 100, 5), (3, 1): Bomb(3, 1, 'p1', 104, 5)}
+    r.explode((1, 1), 100)
+    assert (5, 1) not in r.crates
+    assert (6, 1) not in {(blast.x, blast.y) for blast in r.blasts}
+
+
+def test_remote_rejects_trapped_players_and_spectators_do_not_score():
+    r = make_room(mode='teams')
+    player = r.players['g0']
+    player.remote = True
+    player.trapped_until = 110
+    r.bombs[(1, 1)] = Bomb(1, 1, player.id, 115, 2, remote=True)
+    assert not r.remote_detonate(player, 105)
+    spectator = Player('viewer', 'Viewer', spectator=True, team=0)
+    r.players['viewer'] = spectator
+    r.finish('0')
+    assert spectator.score == 0
+    assert player.score == 3
+
+
+def test_quick_match_reserves_the_same_room_for_guests_before_they_connect():
+    ROOMS.clear()
+    with TestClient(app) as host, TestClient(app) as guest:
+        code = host.post('/api/match').json()['id']
+        assert guest.post('/api/match').json()['id'] == code
+        with guest.websocket_connect(f'/ws/{code}?name=Guest') as second:
+            second.receive_json()
+            assert second.receive_json()['host'] == ''
+            with host.websocket_connect(f'/ws/{code}?name=Host') as first:
+                assert first.receive_json()['id'] == first.receive_json()['host']
+    ROOMS.clear()
+
+
+def test_audio_transport_matches_every_supplied_wav():
+    manifest = json.loads((KIT / 'asset_manifest.json').read_text())
+    with TestClient(app) as client:
+        for name in manifest['categories']['08_audio']:
+            response = client.get(f'/assets/08_audio/{name}')
+            assert response.headers['content-type'] == 'audio/wav'
+            assert response.content == (KIT / '08_audio' / name).read_bytes()
+        assert client.get('/assets/08_audio/other.wav').status_code == 404

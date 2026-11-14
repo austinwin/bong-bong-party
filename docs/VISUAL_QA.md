@@ -1,0 +1,8 @@
+# Visual references
+
+- The kit's `lobby_and_game_hud.png` informed the cobalt panels, cyan borders, glossy controls and room-list density. `example_gameplay.png` informed the tiled playfield, pixel scale and adjacent player/item HUD.
+- The [June 2007 Thanh Niên capture](https://thanhnien.vn/boom-online-ra-mat-phien-ban-moi-nhat-103-185191079.htm) shows the arena framed on the left, with a narrow blue status column at right. Its companion article documents remote detonation and period match lengths.
+- The [later Vietnamese PC match screenshot](https://kenh14.vn/tua-game-boom-online-gan-lien-voi-tuoi-tho-sap-dong-cua-sau-10-nam-gan-bo-game-thu-viet-20170210133230989.chn) shows nameplates, distinct water lanes and the compact roster. The [archived room image](https://fptshop.com.vn/tin-tuc/giai-tri/boom-online-177144) shows two rows of four slots, a separate map control and blue chat. These later captures informed layout and proportions.
+- The [March 2007 launch coverage](https://thanhnien.vn/boom-online-da-den-vn-co-hoi-thuong-tien-van-trong-dot-close-beta-185262063.htm) documents the core team and water-bubble premise. The supplied kit's characters, levels and sounds have their own provenance, and exact 2007 pixel and timing fidelity is unverified.
+
+The browser suite can capture the real lobby, ready room and active match when `CAPTURE_QA` points to an existing directory. Compare at desktop and phone widths. The mobile controls sit below the arena in portrait and at its sides in short landscape. The overview button toggles between a local following camera and the complete board.

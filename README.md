@@ -1,70 +1,46 @@
 # Bong Bong Party
 
-Independent, free-to-play multiplayer water-balloon browser arcade, inspired by the feel of Vietnam's 2007 internet-café era. **Not affiliated with VNG, Nexon, or Boom Online.** The included art and audio come from the original *Bubble Arena 2007 Design Reference Kit* supplied for this project; no proprietary Boom Online client assets are included.
+An independent Vietnamese water-balloon arcade inspired by Boom Online. The supplied Bubble Arena kit provides the game's pixel art and synthetic audio. The kit's README documents its provenance.
 
 ## Play
 
-1. Open the app, choose one of the eight animated pixel characters, and enter a nickname.
-2. Choose **Chơi nhanh** to find a public room, **Tạo phòng** for a private room, or enter a shared six-character room code.
-3. Players can mark ready; the host selects one of eight maps and teams or free-for-all, then starts a round.
-4. Use **WASD / arrow keys** to move, **Space** to place a water balloon, **R** to throw when holding a glove, and **E** to detonate remote balloons. On mobile use the dedicated D-pad and balloon/action buttons.
-5. Explosions travel in four grid directions; solid walls block them and crates are destroyed. Pickups can increase speed, range and capacity or unlock kicking, throwing, remote detonation, shields and temporary invulnerability. Trapped teammates are rescued by touch; opponents can eliminate them.
-6. The server declares the winner. The host can choose rematch, or people can return to the public lobby.
-
-## Features
-
-- **Real multiplayer:** authoritative FastAPI/WebSockets server with up to eight players, predictable 30 Hz simulation, ~12 Hz state broadcast, room codes, lobby/ready states, host controls, team or free-for-all results and chat.
-- **Anonymous identity:** random guest cookie with an independently HMAC-signed, HttpOnly reconnect token. Nickname/avatar and audio settings stored on the browser; no IP address or browser fingerprinting as identity.
-- **Reconnection:** 38-second disconnect grace, replacement socket for an already-known guest, 38-second slot retention, no state-changing trust of client-supplied coordinates or wins. Messages are size- and rate-limited, movement is validated and server cooldowns apply.
-- **Visuals:** kit-based pixel sprites and real original UI button assets, 8 maps using all 8 floor tiles and 10 obstacle assets, animated 4-frame balloons and 6-frame water-burst effects, fullscreen Canvas board with mobile following camera.
-- **Audio:** all 11 WAV files used, original lobby-loop music, event-driven sound effects, separate music/SFX volume and mute switches; playback starts only after user interaction.
-- **Renderer:** no client-side framework dependency, Canvas2D with nearest-neighbor sprites and `requestAnimationFrame` (target 60 FPS). Pixel rendering does not affect server tile collision rules.
-
-## Technical layout
-
-```text
-main.py                     FastAPI QPyServe game logic, validation, WebSocket server
-frontend/index.html         PC-style lobby, room and game UI
-frontend/style.css          Desktop / iPhone-first responsive styling
-frontend/game.js            Canvas renderer, sprite registry, lobby, input, audio
-frontend/assets/            ALL 60 supplied individually usable PNG/WAV files
-frontend/assets/asset_manifest.json   Asset registry source
-reference/                  5 design reference boards + 2 preview sheets (not game textures)
-docs/ASSET_KIT_README.md    Original reference kit README
-reference/ASSET_AUDIT.md    Inventory and normalization notes
-render.yaml                 Render blueprint configuration
-tests/                      Server, transport and sprite-asset tests
-```
+1. Pick one of eight characters and edit your nickname. No account is required.
+2. Select **Chơi nhanh** to join or create a public queue, **Tạo phòng** to host, or **Vào phòng** with a friend's code. **Tập chơi** opens a one-player practice room.
+3. The host selects one of eight arenas and chooses teams or free-for-all. In multiplayer, at least two people must be connected, and everyone besides the host must ready up.
+4. Move with **WASD** or the **arrow keys**. Press **Space** to place a balloon, **R** to throw with a glove, and **E** to detonate with the remote. On touch screens, drag across the directional pad and tap the balloon button with the other thumb.
+5. Break crates to reveal upgrades. Water traps players in bubbles. Touch a trapped teammate to rescue them or a trapped opponent to eliminate them. The last surviving team or player wins. A round that reaches the time limit is a draw.
+6. Ready up for a rematch or return to the lobby. A room with an open slot can admit spectators during a match.
 
 ## Run locally
 
-Python 3.12+:
+Requires Python 3.12 or newer. Node.js is only used for browser tests.
 
-```bash
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-Open http://127.0.0.1:10000. On Render, the command is `python main.py --prod` and port is the `PORT` environment variable. QPyServe serves frontend and backend from the same origin and supports WebSocket routes. **Single worker and single instance** are intentional: room state is held in process memory.
+Open <http://127.0.0.1:10000>. The production command is `python main.py --prod`.
 
-Tests:
+## Checks
 
-```bash
+```sh
 python -m pip install pytest httpx
 python -m pytest -q
-node --check frontend/game.js
+npm ci
+npx playwright install chromium webkit
+PYTHON=.venv/bin/python npm run test:browser
 ```
 
-## Hosting constraints
+Pass `BASE_URL=https://bong-bong-party.onrender.com` to exercise the Render service. The WebKit project uses iPhone 13 browser emulation. The Android Chromium project sends simultaneous touch points through the browser.
 
-The `render.yaml` is configured for free-tier testing on Render (Ohio region). Free instances can sleep and restart; rooms and scores are **volatile** and reset on instance restart. Reconnection only works while a room survives on the same server process. Stable identity across Render process restarts requires `BB_AUTH_SECRET` (a secure secret you configure in Render), plus a persistent player store if you need historical scores/nicknames in the cloud. A browser local ID is kept within its own browser profile and is lost if cookies are deleted.
+## Runtime
 
-For production-scale competitive play, add PostgreSQL or Redis for room state and presence, multi-instance routing, telemetry, abuse reporting, matchmaking fairness, anti-lag measurements and load tests. The default implementation is suitable for a small friend group on one service, not a large esports-scale release.
+- QPyServe runs FastAPI and serves the same-origin Canvas client. The server owns collision, items, ballistics, time and results. A 30 Hz simulation publishes snapshots at roughly 15 Hz in active matches. Each connection has a bounded send queue, and the client interpolates received positions.
+- A 128-bit random guest ID and a signed reconnect token live in HttpOnly cookies. Nickname, character, audio and camera preferences live in the browser. Players have 38 seconds to reconnect to a surviving room. A replacement socket keeps the player's seat, score and position.
+- The service uses one worker and one instance. Rooms, scores and chat are in memory. Render restarts end active matches. Free-tier cold starts can delay the first connection. Supabase is unnecessary for the current transient room model.
+- Canvas targets 60 FPS via `requestAnimationFrame`. The renderer caches static terrain and interpolates character positions. Web Audio starts after interaction and uses separate music and effects gains.
 
-## Historical reference and rights
-
-2007 version and remote controls: https://thanhnien.vn/boom-online-ra-mat-phien-ban-moi-nhat-103-185191079.htm
-
-2007 launch and gameplay overview: https://dantri.com.vn/cong-nghe/boom-online-gia-nhap-lang-game-viet-nam-1174700775.htm
-
-The historical reference screens included in the supplied kit are targets for proportions and atmosphere, not redistributable game assets. This is an independent arcade game with original provided art/music, not a verified pixel-perfect reproduction of an unauthorized client.
+[Asset audit](reference/ASSET_AUDIT.md) · [Historical comparison](docs/VISUAL_QA.md) · [Render deployment](DEPLOY.md)

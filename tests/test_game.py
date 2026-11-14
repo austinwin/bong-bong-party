@@ -11,7 +11,10 @@ def make_duo(mode='teams'):
     r = Room('ABCDEF', 'a')
     r.players = {'a': Player('a', 'Mây', 'coral'), 'b': Player('b', 'Bé', 'aqua')}
     r.mode = mode
+    for player in r.players.values():
+        player.socket = object()
     assert r.start('a', 100.0)
+    r.countdown_end = 100
     return r
 
 
@@ -76,7 +79,10 @@ def test_team_rescue():
         'b':Player('b','Bé','aqua'),
         'c':Player('c','Cà','lilac')
     }
-    r.start('a',100)
+    for player in r.players.values():
+        player.socket = object()
+    assert r.start('a', 100)
+    r.countdown_end = 100
     a,b,c=r.players.values()
     a.x,a.y=1.5,1.5
     c.x,c.y=1.6,1.5  # a and c are teammates (0 and 2)
@@ -118,16 +124,23 @@ def test_multiplayer_websocket_handshake():
             with second.websocket_connect(f'/ws/{code}?name=Hồng') as b:
                 assert b.receive_json()['type']=='welcome'
                 assert len(b.receive_json()['players'])==2
-                a.send_json({'type':'start'})
-                for _ in range(8):
-                    snap=a.receive_json()
-                    if snap['state']=='playing':break
-                assert snap['state']=='playing'
-                a.send_json({'type':'bomb'})
-                for _ in range(8):
-                    snap=a.receive_json()
-                    if snap['bombs']:break
-                assert len(snap['bombs'])==1
+                b.send_json({'type': 'ready', 'value': True})
+                while not all(p['ready'] for p in a.receive_json()['players']):
+                    pass
+                a.send_json({'type': 'start'})
+                while a.receive_json()['state'] != 'playing':
+                    pass
+                ROOMS[code].countdown_end = time.monotonic()
+                for seq in (1, 1):
+                    a.send_json({'type': 'bomb', 'seq': seq, 'round': 1})
+                snap_a = a.receive_json()
+                while not snap_a['bombs']:
+                    snap_a = a.receive_json()
+                snap_b = b.receive_json()
+                while not snap_b['bombs']:
+                    snap_b = b.receive_json()
+                assert snap_a['bombs'][0]['x'] == snap_b['bombs'][0]['x'] == 1
+                assert [e['type'] for e in snap_a['events']].count('bomb') == 1
     ROOMS.clear()
 
 
