@@ -33,6 +33,8 @@ const connectionErrors = {
   4404: 'Không tìm thấy phòng.',
   4409: 'Phòng đã đầy.',
 };
+const roomCodePattern = /^[A-Z2-9]{6}$/;
+const lobbyActions = { quick: 'quickPlay', public: 'createRoom', practice: 'practice' };
 function stored(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
 }
@@ -127,13 +129,14 @@ async function refreshRooms() {
   try {
     const rooms = await publicRooms();
     $('roomCount').textContent = `${rooms.length} phòng công khai`;
+    $('roomDirectory').toggleAttribute('data-rooms', rooms.length > 0);
     const list = $('roomList');
     const key = JSON.stringify(rooms);
     if (list.dataset.key === key) return;
     list.dataset.key = key;
     list.replaceChildren();
     if (!rooms.length) {
-      list.append(node('p', 'Chưa có phòng. Chơi nhanh hoặc tạo phòng để mời bạn!', 'empty-list'));
+      list.append(node('p', 'Chưa có phòng công khai.', 'empty-list'));
     }
     for (const room of rooms) {
       const row = node('div', undefined, 'room-row');
@@ -147,15 +150,25 @@ async function refreshRooms() {
     }
   } catch (error) {
     $('roomCount').textContent = '';
+    $('roomDirectory').removeAttribute('data-rooms');
     $('roomList').dataset.key = '';
     $('roomList').replaceChildren(node('p', error.message, 'empty-list'));
   }
+}
+
+function updateLobbyActions() {
+  const disabled = !state.ready || state.pending;
+  for (const id of Object.values(lobbyActions)) $(id).disabled = disabled;
+  $('joinRoom').disabled = disabled || !roomCodePattern.test($('roomCode').value.trim().toUpperCase());
 }
 
 async function findRoom(mode) {
   if (state.pending || state.room) return;
   audio.unlock();
   state.pending = true;
+  const action = $(lobbyActions[mode]);
+  action.setAttribute('aria-busy', 'true');
+  updateLobbyActions();
   try {
     const path = mode === 'quick' ? '/api/match' : mode === 'practice' ? '/api/rooms?practice=true' : '/api/rooms';
     const response = await fetch(path, { method: 'POST' });
@@ -166,13 +179,15 @@ async function findRoom(mode) {
     toast(error.message);
   } finally {
     state.pending = false;
+    action.removeAttribute('aria-busy');
+    updateLobbyActions();
   }
 }
 
 function enter(rawCode, fromSearch = false) {
   const code = String(rawCode).trim().toUpperCase();
   if (!state.ready || state.room || (state.pending && !fromSearch)) return;
-  if (!/^[A-Z2-9]{6}$/.test(code)) {
+  if (!roomCodePattern.test(code)) {
     toast('Mã phòng gồm 6 chữ cái hoặc số từ 2 đến 9.');
     return;
   }
@@ -190,6 +205,7 @@ function enter(rawCode, fromSearch = false) {
   $('chatMessages').replaceChildren();
   $('currentRoom').textContent = code;
   $('homeScreen').hidden = true;
+  $('gameScreen').removeAttribute('data-practice');
   $('gameScreen').hidden = false;
   $('boardOverlay').hidden = false;
   $('roundSummary').hidden = true;
@@ -299,6 +315,7 @@ function receive(world) {
     audio.result(winner(localPlayer(), world));
   }
   const active = world.state === 'playing';
+  $('gameScreen').toggleAttribute('data-practice', world.practice);
   audio.scene(active, active && world.time <= 30, world.map);
   if (!active && previous?.map !== world.map) audio.prepareMatch(world.map);
   const me = localPlayer();
@@ -448,12 +465,13 @@ function renderRoom(world) {
   const connected = world.players.filter(player => player.connected);
   const unready = connected.some(player => player.id !== state.id && !player.ready);
   const enough = connected.length >= (world.practice ? 1 : 2);
-  $('overlayTitle').textContent = world.practice ? (finished ? 'Kết thúc tập chơi' : 'Tập chơi') :
+  $('overlayTitle').textContent = world.practice ? (finished ? 'Kết thúc tập chơi' : 'Chọn sân tập') :
     !finished ? 'Phòng chờ' : world.winner === 'draw' ? 'Trận hòa' : winner(me, world) ? 'Chiến thắng!' : 'Kết thúc trận';
   const winners = world.players.filter(player => winner(player, world));
   $('overlayDesc').textContent = finished && winners.length ? winners.map(player => player.name).join(', ') : '';
   $('mapPicker').value = world.map;
   $('mapPicker').disabled = !host;
+  $('modeButtons').hidden = world.practice;
   for (const button of $('modeButtons').children) {
     button.classList.toggle('selected', button.dataset.mode === world.mode);
     button.setAttribute('aria-pressed', String(button.dataset.mode === world.mode));
@@ -477,14 +495,11 @@ function renderRoom(world) {
   }
   $('overlayPlayers').replaceChildren(...slots);
   ready.hidden = host;
-  ready.classList.toggle('sprite-ready', !me?.ready);
-  ready.classList.toggle('sprite-cancel', Boolean(me?.ready));
-  ready.setAttribute('aria-label', me?.ready ? 'Hủy sẵn sàng' : 'Sẵn sàng');
+  ready.dataset.skin = me?.ready ? 'cancel' : 'ready';
+  ready.lastElementChild.textContent = me?.ready ? 'Hủy sẵn sàng' : 'Sẵn sàng';
   start.hidden = !host;
   start.disabled = !enough || unready;
-  start.classList.toggle('replay-button', finished);
-  start.firstElementChild.hidden = !finished;
-  start.setAttribute('aria-label', finished ? 'Chơi lại' : 'Bắt đầu');
+  start.lastElementChild.textContent = finished ? 'Chơi lại' : 'Bắt đầu';
   $('waitingNote').textContent = !host ? 'Chờ chủ phòng bắt đầu.' :
     !enough ? 'Mời thêm người để bắt đầu.' : unready ? 'Chờ mọi người sẵn sàng.' :
     '';
@@ -645,6 +660,7 @@ function bind() {
   $('leaveRoom').onclick = () => leave();
   $('logo').onclick = () => { if (state.room) leave(); };
   $('nickname').onchange = profile;
+  $('roomCode').oninput = updateLobbyActions;
   $('joinForm').onsubmit = event => { event.preventDefault(); enter($('roomCode').value); };
   $('shareRoom').onclick = async () => {
     if (!navigator.clipboard?.writeText && navigator.share) {
@@ -887,7 +903,8 @@ async function boot() {
     state.nick = state.nick || guest.suggestedName;
     $('nickname').value = state.nick;
     state.ready = true;
-    for (const id of ['nickname', 'quickPlay', 'createRoom', 'practice', 'joinRoom']) $(id).disabled = false;
+    $('nickname').disabled = false;
+    updateLobbyActions();
     status('Sẵn sàng', true);
     refreshRooms();
     setInterval(() => { if (!state.room && !document.hidden) refreshRooms(); }, 5000);

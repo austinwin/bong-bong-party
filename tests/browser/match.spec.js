@@ -55,6 +55,13 @@ function monitor(page) {
   return { history, errors, downloads, state: () => history.findLast(frame => frame.type === 'state') };
 }
 
+async function expectButtonFace(button, text, artwork) {
+  await expect(button).toHaveText(text);
+  await expect(button).toHaveCSS('background-image', /^radial-gradient.*linear-gradient/);
+  const rim = await button.evaluate(el => getComputedStyle(el, '::after').borderImageSource);
+  expect(rim).toContain(`/07_ui/${artwork}_button.png`);
+}
+
 async function trackPlayback(page) {
   await page.addInitScript(() => {
     const context = window.AudioContext || window.webkitAudioContext;
@@ -115,15 +122,28 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await peer.locator('#nickname').fill('Vịt QA');
     await peer.locator('#nickname').blur();
     await press(peer.getByRole('button', { name: 'Vịt Vàng', exact: true }));
+    const join = peer.getByRole('button', { name: 'Vào phòng', exact: true });
+    await expect(join).toBeDisabled();
     await peer.getByRole('textbox', { name: 'Mã phòng' }).fill(code);
     await peer.getByRole('textbox', { name: 'Mã phòng' }).blur();
-    await press(peer.getByRole('button', { name: 'Vào phòng', exact: true }));
+    await expect(join).toBeEnabled();
+    await expectButtonFace(join, 'Vào phòng', 'join');
+    await press(join);
     await expect(page.locator('#overlayPlayers img')).toHaveCount(2);
     await expect(page.locator('#overlayPlayers')).toContainText('Ếch QA');
     await expect(page.locator('#overlayPlayers')).toContainText('Vịt QA');
     await expect(page.getByRole('button', { name: 'Bắt đầu' })).toBeDisabled();
-    await press(peer.getByRole('button', { name: 'Sẵn sàng', exact: true }));
-    await expect(page.getByRole('button', { name: 'Bắt đầu' })).toBeEnabled();
+    const ready = peer.getByRole('button', { name: 'Sẵn sàng', exact: true });
+    const cancel = peer.getByRole('button', { name: 'Hủy sẵn sàng', exact: true });
+    await expectButtonFace(ready, 'Sẵn sàng', 'ready');
+    await press(ready);
+    await expectButtonFace(cancel, 'Hủy sẵn sàng', 'cancel');
+    await press(cancel);
+    await expect(ready).toBeVisible();
+    await press(ready);
+    const start = page.getByRole('button', { name: 'Bắt đầu', exact: true });
+    await expect(start).toBeEnabled();
+    await expectButtonFace(start, 'Bắt đầu', 'start');
     await peer.getByRole('textbox', { name: 'Tin nhắn' }).fill('Chào phòng!');
     await peer.getByRole('textbox', { name: 'Tin nhắn' }).blur();
     await press(peer.getByRole('button', { name: 'Gửi', exact: true }));
@@ -239,8 +259,21 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Tập chơi' })).toBeInViewport({ ratio: 1 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
+  const touchTargets = await page.locator('.lobby-actions button').evaluateAll(buttons => buttons.map(button => {
+    const { width, height } = button.getBoundingClientRect();
+    return Math.min(width, height);
+  }));
+  expect(Math.min(...touchTargets)).toBeGreaterThanOrEqual(44);
+  if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-320-lobby.png`, fullPage: true });
   await page.getByRole('button', { name: 'Tập chơi' }).tap();
-  await page.getByRole('button', { name: 'Bắt đầu' }).tap();
+  const start = page.getByRole('button', { name: 'Bắt đầu', exact: true });
+  await expect(start).toBeInViewport({ ratio: 1 });
+  await expectButtonFace(start, 'Bắt đầu', 'start');
+  await expect(page.locator('#modeButtons')).toBeHidden();
+  await expect(page.locator('.chat-panel')).toBeHidden();
+  if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-320-practice.png` });
+  await start.tap();
   await expect(page.locator('#arena')).toBeVisible();
   for (const viewport of [{ width: 320, height: 568 }, { width: 750, height: 342 }]) {
     await page.setViewportSize(viewport);
