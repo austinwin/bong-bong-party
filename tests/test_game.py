@@ -57,16 +57,53 @@ def test_collision_prevents_moving_through_walls():
     assert not r.collision(1.5,1.5,p)
 
 
-def test_touch_turn_assist_centers_an_open_lane_and_stops_at_a_crate():
+def test_touch_turn_assist_moves_only_enough_to_clear_the_corner():
     r = make_duo()
     r.walls, r.crates = {(2, 2)}, {(1, 3)}
     p = r.players['a']
     p.x, p.y, p.dx, p.dy = 1.79, 1.69, 0, 1
     for step in range(30):
+        old_x, old_y = p.x, p.y
         r.move_player(p, 1 / 30, 100 + step / 30)
         assert not r.collision(p.x, p.y, p)
-    assert p.x == 1.5
+        assert abs(p.x - old_x) + abs(p.y - old_y) < .101
+    assert 1.62 < p.x < 1.73
     assert 2.5 < p.y < 2.73
+
+
+def test_slow_pace_stays_on_axis_and_stops_without_inertia():
+    r = make_duo()
+    p = r.players['a']
+    p.x, p.y, p.dx, p.pace = 1.5, 1.72, 1, 1
+    for step in range(12):
+        r.move_player(p, 1 / 30, 100 + step / 30)
+    assert 1.95 < p.x < 1.97
+    assert p.y == 1.72
+    p.dx = -1
+    r.move_player(p, 1 / 30, 101)
+    assert p.x < 1.94
+    p.dx = 0
+    stop = (p.x, p.y)
+    r.move_player(p, 1 / 30, 102)
+    assert (p.x, p.y) == stop
+
+
+def test_practice_opens_an_escape_lane_and_rewards_the_first_crate():
+    r = Room('ABCDEF', 'a', practice=True)
+    player = r.join('a', 'Mây', object())
+    assert r.start('a', 100)
+    r.countdown_end = 100
+    assert all(r.passable(tile) for tile in [(1, 2), (1, 3), (2, 3)])
+    assert r.place_bomb(player, 100)
+    assert player.placed == 1
+    r.explode((1, 1), 102.15)
+    assert r.pickups[(3, 1)] == 'speed'
+    assert player.cleared == 1
+    r.award(player, r.pickups.pop((3, 1)), 103)
+    assert player.snapshot(103)['roundStats'] == {'placed': 1, 'cleared': 1, 'collected': 1, 'rescued': 0}
+    r.finish('draw')
+    assert r.start('a', 104)
+    assert not any(player.snapshot(104)['roundStats'].values())
 
 
 def test_traps_rescue_and_victory():

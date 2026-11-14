@@ -212,11 +212,15 @@ export class Arena {
       drawScenicBoard(this.baseContext, theme, world);
       this.terrain = key;
     }
-    this.local.receive(world.players.find(player => player.id === localId), movementTerrain(world));
+    this.local.receive(world.players.find(player => player.id === localId), movementTerrain(world), time);
   }
 
-  move(dx, dy) {
-    this.local.input(dx, dy);
+  move(dx, dy, pace, sequence) {
+    this.local.input(dx, dy, pace, sequence, performance.now());
+  }
+
+  resetLocalInput() {
+    this.local.reset();
   }
 
   cue(type) {
@@ -328,10 +332,9 @@ export class Arena {
     const mix = this.camera && !reduced ? 1 - Math.exp(-dt / (this.camera.follow === follow ? 80 : 52)) : 1;
     const scale = this.camera ? this.camera.scale + (targetScale - this.camera.scale) * mix : targetScale;
     const viewW = width / scale, viewH = height / scale;
-    const lead = !reduced && follow ? local.gait * .48 : 0;
     const target = follow ? {
-      x: followOffset(local.drawn.x + (local.facing?.[0] || 0) * lead, viewW, WIDTH),
-      y: followOffset(local.drawn.y + (local.facing?.[1] || 0) * lead, viewH, HEIGHT),
+      x: followOffset(local.drawn.x, viewW, WIDTH),
+      y: followOffset(local.drawn.y, viewH, HEIGHT),
     } : { x: (WIDTH - viewW) / 2, y: (HEIGHT - viewH) / 2 };
     if (!this.camera || Math.abs(targetScale - scale) < .002 && !follow) {
       this.camera = { ...target, scale: targetScale, follow };
@@ -341,14 +344,16 @@ export class Arena {
       const originX = this.camera.x + (oldViewW - viewW) / 2;
       const originY = this.camera.y + (oldViewH - viewH) / 2;
       const step = this.camera.follow === follow ? mix : Math.max(mix, .15);
-      this.camera.x = originX + (target.x - originX) * step;
-      this.camera.y = originY + (target.y - originY) * step;
+      const settle = follow && this.camera.follow && !reduced ? 3 : 0;
+      this.camera.x = originX + (target.x - originX - clamp(target.x - originX, -settle, settle)) * step;
+      this.camera.y = originY + (target.y - originY - clamp(target.y - originY, -settle, settle)) * step;
       this.camera.scale = scale;
       this.camera.follow = follow;
     }
     ctx.scale(this.camera.scale, this.camera.scale);
     ctx.translate(-this.camera.x, -this.camera.y);
     ctx.drawImage(this.base, -BORDER_X, -BORDER_Y);
+    if (local?.player.alive && !local.player.trapped) this.drawFocusedTile(local.drawn);
     for (const [x, y, kind] of world.pickups) this.drawPickup(x, y, kind, time);
     for (const balloon of world.bombs) this.drawBalloon(balloon, elapsed);
     this.drawWater(world.blasts, elapsed);
@@ -394,6 +399,22 @@ export class Arena {
     ctx.fill();
   }
 
+  drawFocusedTile({ x, y }) {
+    const ctx = this.ctx;
+    const left = Math.floor(x) * TILE + 4, top = Math.floor(y) * TILE + 4;
+    const right = left + TILE - 8, bottom = top + TILE - 8;
+    ctx.beginPath();
+    for (const [cornerX, cornerY, dx, dy] of [[left, top, 1, 1], [right, top, -1, 1],
+      [left, bottom, 1, -1], [right, bottom, -1, -1]]) {
+      ctx.moveTo(cornerX + dx * 9, cornerY);
+      ctx.lineTo(cornerX, cornerY);
+      ctx.lineTo(cornerX, cornerY + dy * 9);
+    }
+    ctx.strokeStyle = '#fff1ad99';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
   drawBalloon(balloon, elapsed) {
     const age = Math.max(0, balloon.age * 1000 + elapsed);
     const { x, y } = balloon;
@@ -405,7 +426,19 @@ export class Arena {
       lift = Math.sin(Math.PI * progress) * TILE;
     }
     const frame = frameAt(age % 660, PULSE_MS);
-    draw(this.ctx, '05_water_balloons', 'balloon_' + frame, dx * TILE, dy * TILE - lift);
+    const ctx = this.ctx, centerX = (dx + .5) * TILE, centerY = (dy + .76) * TILE;
+    ctx.beginPath();
+    ctx.fillStyle = '#172d5d55';
+    ctx.ellipse(centerX, centerY, 20, 6, 0, 0, TAU);
+    ctx.fill();
+    if (balloon.fuse * 1000 - elapsed < 380) {
+      ctx.beginPath();
+      ctx.ellipse(centerX, centerY - 1, 25, 8, 0, 0, TAU);
+      ctx.strokeStyle = '#ffe398';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+    draw(ctx, '05_water_balloons', 'balloon_' + frame, dx * TILE, dy * TILE - lift);
   }
 
   drawWater(blasts, elapsed) {

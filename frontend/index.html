@@ -89,6 +89,15 @@
         </div>
         <div class="game-body">
           <div class="play-panel panel">
+            <div id="matchReadout" class="match-readout" hidden>
+              <span id="playerBadge" class="player-badge"><img id="playerPortrait" alt=""><strong id="playerReadiness"></strong></span>
+              <p id="practiceTip" class="practice-tip" hidden></p>
+              <div id="matchGear" class="match-gear" role="group" aria-label="Chỉ số của bạn">
+                <span title="Bóng nước còn lại"><img src="/assets/04_powerups/extra_balloon.png" alt="Bóng nước còn lại"><strong id="gearBalloon"></strong></span>
+                <span title="Sức nước"><img src="/assets/04_powerups/water_range.png" alt="Sức nước"><strong id="gearRange"></strong></span>
+                <span title="Tốc độ"><img src="/assets/04_powerups/speed.png" alt="Tốc độ"><strong id="gearSpeed"></strong></span>
+              </div>
+            </div>
             <div class="arena-wrap" id="arena" hidden>
               <div class="arena-board">
                 <canvas id="gameCanvas" width="960" height="832" aria-label="Sân chơi đặt bóng nước" role="img"></canvas>
@@ -96,6 +105,7 @@
             </div>
             <section id="boardOverlay" class="room-card" aria-labelledby="overlayTitle">
               <div class="panel-heading"><h2 id="overlayTitle">Phòng chờ</h2><span id="overlayDesc"></span></div>
+              <div id="roundSummary" class="round-summary" hidden></div>
               <div class="room-content">
                 <div id="overlayPlayers" class="room-players" aria-label="Vị trí người chơi"></div>
                 <div class="room-settings">
@@ -108,7 +118,7 @@
                   </div>
                   <div class="room-card-actions">
                     <button id="readyButton" class="sprite-btn sprite-ready" aria-label="Sẵn sàng" hidden></button>
-                    <button id="startGame" class="sprite-btn sprite-start" aria-label="Bắt đầu" disabled></button>
+                    <button id="startGame" class="sprite-btn sprite-start" aria-label="Bắt đầu" disabled><span hidden>Chơi lại</span></button>
                   </div>
                   <p id="waitingNote" class="room-note">Đang kết nối phòng…</p>
                 </div>

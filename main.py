@@ -28,6 +28,10 @@ from fastapi.responses import FileResponse
 W, H = 15, 13
 MAX_PLAYERS = 8
 TICK = 1 / 30
+MOVE_PACES = (0, .38, .68, 1)
+COLLISION_RADIUS = .27
+CORNER_REACH = .36
+PRACTICE_CRATE = (3, 1)
 ROUND_SECONDS = 165
 COUNTDOWN_SECONDS = 3
 FUSE_SECONDS = 2.15
@@ -124,6 +128,7 @@ class Player:
     team: int = 0
     dx: int = 0
     dy: int = 0
+    pace: int = 3
     speed: float = 3.0
     power: int = 2
     capacity: int = 1
@@ -142,12 +147,17 @@ class Player:
     disconnected_at: float = 0
     last_input: float = 0
     last_seq: int = -1
+    input_ack: int = -1
     last_action_seq: int = -1
     facing: tuple[int, int] = (0, 1)
     last_bomb: float = 0
     last_action: float = 0
     last_chat: float = 0
     last_cheer: float = 0
+    placed: int = 0
+    cleared: int = 0
+    collected: int = 0
+    rescued: int = 0
     socket: WebSocket | None = field(default=None, repr=False)
     outgoing: asyncio.Queue | None = field(default=None, repr=False, compare=False)
 
@@ -160,7 +170,10 @@ class Player:
                 'power': self.power, 'capacity': self.capacity, 'score': self.score,
                 'kick': self.kicks, 'glove': self.throws, 'remote': self.remote, 'skates': self.skates,
                 'shield': self.shield, 'star': self.invulnerable_until > now,
-                'facing': self.facing}
+                'facing': self.facing, 'inputAck': self.input_ack,
+                'bubbleTime': max(0, math.ceil(self.trapped_until - now)),
+                'roundStats': {'placed': self.placed, 'cleared': self.cleared, 'collected': self.collected,
+                               'rescued': self.rescued}}
 
 
 @dataclass
@@ -230,6 +243,8 @@ class Room:
         safe = set()
         for sx, sy in STARTS:
             safe.update({(sx, sy), (sx + 1, sy), (sx - 1, sy), (sx, sy + 1), (sx, sy - 1)})
+        if self.practice:
+            safe.update({(1, 3), (2, 3)})
         corridors = {
             'village': lambda x, y: x == 7,
             'garden': lambda x, y: y == 5 and 4 <= x <= 10,
@@ -249,8 +264,12 @@ class Room:
                     continue
                 if not any(corridor(*pos) for pos in (cell, opposite)) and self.rng.random() < .76:
                     self.crates.update((cell, opposite))
+        if self.practice:
+            self.crates.add(PRACTICE_CRATE)
         kinds = MAPS[self.map_id]['blocks']
         self.crate_types = {pos: kinds[self.rng.randrange(len(kinds))] for pos in self.crates}
+        if self.practice:
+            self.crate_types[PRACTICE_CRATE] = 'wood_crate'
         self.bombs.clear()
         self.blasts.clear()
         self.pickups.clear()
@@ -263,7 +282,7 @@ class Room:
             old.name = clean_name(name)
             old.avatar = clean_avatar(avatar)
             old.dx = old.dy = 0
-            old.last_seq = old.last_action_seq = -1
+            old.last_seq = old.last_action_seq = old.input_ack = -1
             old.last_input = 0
             self.event('rejoin', who=old.id)
             return old
@@ -313,6 +332,7 @@ class Room:
             p.kicks = p.throws = p.remote = p.skates = False
             p.shield, p.invulnerable_until = 0, 0
             p.last_bomb = p.last_action = 0
+            p.placed = p.cleared = p.collected = p.rescued = 0
         for p in self.players.values():
             if p not in participants:
                 p.spectator = True
@@ -321,7 +341,7 @@ class Room:
         return True
 
     def collision(self, x: float, y: float, player: Player, now: float | None = None, direction: tuple[int,int] = (0,0)) -> bool:
-        radius = .27
+        radius = COLLISION_RADIUS
         blocking_bombs = set()
         for xx in (math.floor(x-radius), math.floor(x+radius)):
             for yy in (math.floor(y-radius), math.floor(y+radius)):
@@ -388,6 +408,7 @@ class Room:
         if not self.passable(tile) or tile in self.bombs:
             return False
         player.last_bomb = now
+        player.placed += 1
         self.bombs[tile] = Bomb(*tile, player.id, now + (8 if player.remote else FUSE_SECONDS),
                                 player.power, owner_exited=thrown, remote=player.remote, placed_at=now,
                                 launched_from=origin if thrown else None)
@@ -411,7 +432,7 @@ class Room:
 
     def explode(self, tile: tuple[int,int], now: float) -> None:
         pending = [tile]
-        destroyed = set()
+        destroyed: dict[tuple[int, int], str] = {}
         while pending:
             origin = pending.pop()
             bomb = self.bombs.pop(origin, None)
@@ -425,7 +446,7 @@ class Room:
                         break
                     cells.append(cell)
                     if cell in self.crates:
-                        destroyed.add(cell)
+                        destroyed.setdefault(cell, bomb.owner)
                         break
             for cell in cells:
                 self.pickups.pop(cell, None)
@@ -434,13 +455,19 @@ class Room:
                     pending.append(cell)
             self.event('splash', x=bomb.x, y=bomb.y)
         # Destruction resolves after the whole chain, so shared crates block every ray.
-        for cell in destroyed:
+        by_id = {player.id: player for player in self.players.values()}
+        for cell, owner in destroyed.items():
+            if owner in by_id:
+                by_id[owner].cleared += 1
             self.crates.remove(cell)
             self.crate_types.pop(cell, None)
-            if self.rng.random() < .43:
+            if self.practice and cell == PRACTICE_CRATE:
+                self.pickups[cell] = 'speed'
+            elif self.rng.random() < .43:
                 self.pickups[cell] = self.rng.choices(ITEMS, weights=ITEM_WEIGHTS)[0]
 
     def award(self, player: Player, kind: str, now: float) -> None:
+        player.collected += 1
         if kind == 'speed':
             player.speed = min(5.15, player.speed+.36)
         elif kind == 'skates':
@@ -469,9 +496,10 @@ class Room:
             return
         dt = max(0, min(dt, .1))
         for p in self.players.values():
+            p.input_ack = p.last_seq
             if not p.alive or p.trapped_until > now or p.socket is None:
                 continue
-            if now-p.last_input > .45:
+            if now-p.last_input > .30:
                 p.dx = p.dy = 0
             self.move_player(p, dt, now)
             for bomb in self.bombs.values():
@@ -528,6 +556,7 @@ class Room:
                 if self.mode=='teams' and trapped.team==rescuer.team:
                     trapped.trapped_until=0
                     trapped.invulnerable_until=now+1.1
+                    rescuer.rescued += 1
                     self.event('rescue', who=trapped.id)
                 else:
                     trapped.alive=False
@@ -551,19 +580,24 @@ class Room:
     def move_player(self, p: Player, dt: float, now: float) -> None:
         if not (p.dx or p.dy):
             return
-        nx, ny = p.x + dt * p.speed * p.dx, p.y + dt * p.speed * p.dy
-        blocked = self.collision(nx, ny, p, now, (p.dx, p.dy))
-        if not blocked:
-            p.x, p.y = nx, ny
-        centered_x = p.x if p.dx else math.floor(p.x) + .5
-        centered_y = p.y if p.dy else math.floor(p.y) + .5
-        # Near a junction, help the player line up with the open lane they are turning into.
-        turning = blocked and not self.collision(centered_x + dt * p.speed * p.dx,
-                                                  centered_y + dt * p.speed * p.dy, p)
-        limit = dt * (6 if turning else 2.7)
-        sx = p.x + max(-limit, min(limit, centered_x - p.x))
-        sy = p.y + max(-limit, min(limit, centered_y - p.y))
-        if not self.collision(sx, sy, p):
+        remaining = dt * p.speed * MOVE_PACES[p.pace]
+        while remaining > 1e-8:
+            distance = min(remaining, .06)
+            remaining -= distance
+            nx, ny = p.x + p.dx * distance, p.y + p.dy * distance
+            if not self.collision(nx, ny, p, now, (p.dx, p.dy)):
+                p.x, p.y = nx, ny
+                continue
+            # Only assist an attempted turn around a nearby corner. Clear lanes stay straight.
+            cx = p.x if p.dx else math.floor(p.x) + .5
+            cy = p.y if p.dy else math.floor(p.y) + .5
+            offset = abs(cx - p.x) + abs(cy - p.y)
+            if not 0 < offset <= CORNER_REACH or self.collision(cx + p.dx * .08, cy + p.dy * .08, p):
+                return
+            share = min(1, distance / offset)
+            sx, sy = p.x + (cx - p.x) * share, p.y + (cy - p.y) * share
+            if self.collision(sx, sy, p):
+                return
             p.x, p.y = sx, sy
 
     def finish(self, winner: str) -> None:
@@ -588,6 +622,7 @@ class Room:
             'countdown': max(0,math.ceil(self.countdown_end-now)) if self.state=='playing' else 0,
             'players':[p.snapshot(now) for p in self.players.values()],
             'bombs': [{'x': b.x, 'y': b.y, 'age': round(now - b.placed_at, 2), 'remote': b.remote,
+                       'fuse': max(0, round(b.explode_at - now, 2)),
                        'from': b.launched_from, 'owner': b.owner,
                        'pass': None if b.owner_exited else b.owner} for b in self.bombs.values()],
             'blasts':[[b.x,b.y,max(0,round(b.until-now,2))] for b in self.blasts],
@@ -819,9 +854,12 @@ async def room_socket(ws:WebSocket,code:str) -> None:
                 if (type(seq) is not int or not player.last_seq < seq <= 1_000_000_000
                     or type(dx) is not int or type(dy) is not int or abs(dx) + abs(dy) > 1):
                     continue
+                pace = payload.get('pace', 3 if dx or dy else 0)
+                if type(pace) is not int or (pace not in (1, 2, 3) if dx or dy else pace != 0):
+                    continue
                 player.last_seq, player.last_input = seq, now
                 if room.can_act(player, now):
-                    player.dx, player.dy = dx, dy
+                    player.dx, player.dy, player.pace = dx, dy, pace
                     if dx or dy:
                         player.facing = (dx, dy)
             elif kind in ('bomb', 'throw', 'detonate'):

@@ -1,4 +1,29 @@
 import { test, expect, devices } from '@playwright/test';
+import { LocalMovement, movementTerrain, stickIntent } from '../../frontend/movement.js';
+
+test('older input acknowledgments preserve a new direction and a neutral stop', async ({}, info) => {
+  test.skip(info.project.name !== 'desktop', 'Runs the deterministic predictor once.');
+  const local = new LocalMovement();
+  local.reset();
+  const terrain = movementTerrain({ walls: [], crates: [], bombs: [] });
+  const player = { id: 'guest', x: 5.5, y: 5.5, speed: 3, alive: true, connected: true, inputAck: 0 };
+  local.receive(player, terrain, 0);
+  local.sample(0, true);
+  local.input(1, 0, 3, 1, 0);
+  const right = local.sample(32, true);
+  local.input(-1, 0, 3, 2, 32);
+  local.receive({ ...player, x: 5.56, inputAck: 1 }, terrain, 45);
+  const left = local.sample(64, true);
+  expect(right.x).toBeGreaterThan(5.58);
+  expect(left.x).toBeLessThan(right.x - .08);
+  local.input(0, 0, 0, 3, 65);
+  local.receive({ ...player, x: 5.58, inputAck: 2 }, terrain, 68);
+  expect(local.sample(96, true)).toEqual(left);
+  expect(stickIntent(.22, .04, '', 0)).toEqual({ direction: 'right', pace: 1 });
+  expect(stickIntent(.49, .53, 'right', 2)).toEqual({ direction: 'right', pace: 2 });
+  expect(stickIntent(.29, .73, 'right', 2)).toEqual({ direction: 'down', pace: 3 });
+  expect(stickIntent(.02, .04, 'down', 3)).toEqual({ direction: '', pace: 0 });
+});
 
 function monitor(page) {
   const history = [];
@@ -95,6 +120,8 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     expect(first.state().bombs).toHaveLength(0);
     await expect(page.getByRole('button', { name: 'Đặt bóng nước' })).toBeInViewport();
     await expect(page.locator('#joystick')).toBeInViewport();
+    await expect(page.locator('#matchReadout')).toBeInViewport({ ratio: .99 });
+    await expect(page.locator('#gearBalloon')).toHaveText('1/1');
     if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/${info.project.name}-arena.png` });
     const firstId = first.history.findLast(frame => frame.type === 'welcome').id;
     const cheer = page.getByRole('button', { name: 'Cổ vũ', exact: true });
@@ -131,9 +158,12 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     if (mobile) await page.getByRole('button', { name: 'Đặt bóng nước' }).tap();
     else await page.keyboard.press('Space');
     await expect.poll(() => second.state().bombs.length).toBe(1);
+    await expect(page.locator('#gearBalloon')).toHaveText('0/1');
     await expect.poll(() => second.state().players.some(player => player.trapped)).toBeTruthy();
+    await expect(page.locator('#playerReadiness')).toHaveText(/Bị nhốt [1-6]s/);
     await expect(page.locator('#overlayTitle')).toHaveText('Kết thúc trận', { timeout: 10000 });
     await expect(peer.locator('#overlayTitle')).toHaveText('Chiến thắng!');
+    await expect(page.locator('#roundSummary')).toContainText('Thùng đã phá');
     await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.map(clip => Math.round(clip.seconds * 100)))).toEqual(
       expect.arrayContaining([10, 19, 24, 34, 35, 42, 48, 145])
     );
@@ -189,7 +219,7 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await expect(page.locator('#arena')).toBeVisible();
   for (const viewport of [{ width: 320, height: 568 }, { width: 750, height: 342 }]) {
     await page.setViewportSize(viewport);
-    for (const id of ['gameCanvas', 'joystick', 'mobileBomb', 'audioSettings', 'zoomMap', 'cheer']) {
+    for (const id of ['gameCanvas', 'joystick', 'mobileBomb', 'audioSettings', 'zoomMap', 'cheer', 'matchReadout']) {
       await expect(page.locator('#' + id)).toBeInViewport({ ratio: .99 });
     }
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
@@ -245,7 +275,7 @@ test('the phone starts closer to the costume, eases out to the full board and re
   await expect(page.getByRole('button', { name: 'Bật camera theo nhân vật' })).toBeVisible();
 });
 
-test('touch predicts movement during delayed snapshots and can plant a balloon with a second finger', async ({ page, context }, info) => {
+test('touch steers, reverses and stops during stale snapshots, then plants with a second finger', async ({ page, context }, info) => {
   test.skip(info.project.name !== 'android-chromium', 'Uses native Chromium multitouch input.');
   const record = monitor(page);
   let hold = false;
@@ -270,12 +300,20 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
     });
   });
   await page.addInitScript(() => {
+    const drawShadow = CanvasRenderingContext2D.prototype.ellipse;
+    let feet;
+    CanvasRenderingContext2D.prototype.ellipse = function (x, y, rx, ry, ...rest) {
+      if (this.canvas.id === 'gameCanvas' && rx === 23 && ry === 8) {
+        feet = this.getTransform().transformPoint({ x, y });
+      }
+      return drawShadow.call(this, x, y, rx, ry, ...rest);
+    };
     const original = CanvasRenderingContext2D.prototype.drawImage;
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
       if (this.canvas.id === 'gameCanvas' && /\/(10_costumes|12_motion)\//.test(args[0].src || '')) {
         const path = new URL(args[0].src).pathname;
         if (window.costumeFrame?.path !== path) window.poseChanges = (window.poseChanges || 0) + 1;
-        window.costumeFrame = { path, x: this.getTransform().e };
+        window.costumeFrame = { path, x: feet.x, y: feet.y };
         (window.runFrames ??= new Set()).add(path);
       }
       return original.apply(this, args);
@@ -296,8 +334,9 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
   const devtools = await context.newCDPSession(page);
   const point = (box, id) => ({ x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), id });
   const center = point(bounds, 1);
-  const right = { ...center, x: Math.round(center.x + bounds.width * .37) };
-  await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [center] });
+  const grip = { ...center, x: center.x + 7 };
+  const right = { ...grip, x: Math.round(grip.x + bounds.width * .39) };
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [grip] });
   await expect(stick).toHaveClass(/grabbed/);
   await expect(stick).toHaveAttribute('data-active', '');
   await expect.poll(() => page.evaluate(() => window.costumeFrame?.path)).toMatch(/10_costumes/);
@@ -306,18 +345,48 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return Math.abs(window.costumeFrame.x - x);
   })).toBeLessThan(.02);
-  const x = await page.evaluate(() => window.costumeFrame.x);
+  const baseline = await page.evaluate(() => window.costumeFrame);
   await page.evaluate(() => { window.poseChanges = 0; });
   hold = true;
+  const slightRight = { ...grip, x: Math.round(grip.x + bounds.width * .11) };
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [slightRight] });
+  await expect(stick).toHaveAttribute('data-pace', '1');
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [right] });
   await expect(stick).toHaveAttribute('data-active', 'right');
+  await expect(stick).toHaveAttribute('data-pace', '3');
   await expect.poll(() => stick.evaluate(el => Number.parseFloat(el.style.getPropertyValue('--stick-x')))).toBeGreaterThan(10);
-  await expect.poll(() => page.evaluate(() => window.costumeFrame.x)).toBeGreaterThan(x + 8);
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.x)).toBeGreaterThan(baseline.x + 8);
   await expect.poll(() => page.evaluate(() => window.costumeFrame.path)).toMatch(/12_motion\/.*-side/);
   expect(await page.evaluate(() => window.poseChanges)).toBeLessThan(4);
   expect(delivered.players[0].x).toBe(1.5);
-  hold = false;
+
+  const peak = await page.evaluate(() => window.costumeFrame.x);
+  const left = { ...grip, x: Math.round(grip.x - bounds.width * .39) };
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [left] });
+  await expect(stick).toHaveAttribute('data-active', 'left');
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.x)).toBeLessThan(peak - 3);
+  const down = { ...grip, y: Math.round(grip.y + bounds.width * .38) };
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [down] });
+  await expect(stick).toHaveAttribute('data-active', 'down');
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.y)).toBeGreaterThan(baseline.y + 8);
+  const bottom = await page.evaluate(() => window.costumeFrame.y);
+  const up = { ...grip, y: Math.round(grip.y - bounds.width * .38) };
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [up] });
+  await expect(stick).toHaveAttribute('data-active', 'up');
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.y)).toBeLessThan(bottom - 3);
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [grip] });
+  await expect(stick).toHaveAttribute('data-active', '');
+  await expect(stick).toHaveAttribute('data-pace', '0');
+  const stopped = await page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const previous = window.costumeFrame;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return Math.hypot(window.costumeFrame.x - previous.x, window.costumeFrame.y - previous.y);
+  });
+  expect(stopped).toBeLessThan(.08);
   if (held) relay.send(held);
+  hold = false;
+  await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [right] });
   await expect.poll(() => delivered.players[0].x).toBeGreaterThan(1.85);
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [right, point(bomb, 2)] });
   await expect.poll(() => delivered.bombs.length).toBe(1);
