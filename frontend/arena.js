@@ -4,7 +4,6 @@ const W = 15, H = 13, TILE = 64, WIDTH = W * TILE, HEIGHT = H * TILE;
 const PULSE_MS = [180, 180, 150, 150];
 const SPLASH_MS = [70, 70, 85, 95, 85, 85];
 const WATER = '06_water_blasts';
-const mobile = matchMedia('(pointer: coarse), (max-width: 700px)');
 const TRIM = { wood: 'cobble', grass: 'sand', pink: 'cobble', ice: 'stone', cobble: 'stone',
   sand: 'cobble', stone: 'cobble', water: 'wood' };
 
@@ -22,10 +21,23 @@ function draw(ctx, category, name, x, y, size = TILE) {
 }
 
 function drawFloor(ctx, theme) {
+  const floor = sprite('02_floor_tiles', theme.floor);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const primary = y > 1 && y < H - 2 && (theme.floor !== 'wood' || x > 1 && x < W - 2);
-      draw(ctx, '02_floor_tiles', primary ? theme.floor : TRIM[theme.floor], x * TILE, y * TILE);
+      const rim = x === 0 || x === W - 1 || y === 0 || y === H - 1;
+      const left = x * TILE, top = y * TILE;
+      if (rim) draw(ctx, '02_floor_tiles', TRIM[theme.floor], left, top);
+      else if (floor && theme.floor === 'wood' && (x + y) % 2 === 0) {
+        ctx.save();
+        ctx.translate(left + TILE, top);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(floor, 0, 0, TILE, TILE);
+        ctx.restore();
+      } else if (floor) ctx.drawImage(floor, left, top, TILE, TILE);
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#10243513' : '#fff5d20a';
+      ctx.fillRect(left, top, TILE, TILE);
+      ctx.strokeStyle = '#20364350';
+      ctx.strokeRect(left + .5, top + .5, TILE - 1, TILE - 1);
     }
   }
 }
@@ -101,7 +113,7 @@ export class Arena {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
     const local = this.positions.get(this.localId);
-    if (mobile.matches && !overview && local?.player.alive && !world.countdown) {
+    if (!overview && local?.player.alive && !world.countdown) {
       const scale = W / 10.5;
       const viewW = WIDTH / scale, viewH = HEIGHT / scale;
       const x = Math.max(0, Math.min(WIDTH - viewW, local.drawn.x * TILE - viewW / 2));

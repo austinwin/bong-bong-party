@@ -7,7 +7,7 @@ An independent Vietnamese water-balloon arcade inspired by Boom Online. The supp
 1. Pick one of eight characters and edit your nickname. No account is required.
 2. Select **Chơi nhanh** to join or create a public queue, **Tạo phòng** to host, or **Vào phòng** with a friend's code. **Tập chơi** opens a one-player practice room.
 3. The host selects one of eight arenas and chooses teams or free-for-all. In multiplayer, at least two people must be connected, and everyone besides the host must ready up.
-4. Move with **WASD** or the **arrow keys**. Press **Space** to place a balloon, **R** to throw with a glove, and **E** to detonate with the remote. On touch screens, drag across the directional pad and tap the balloon button with the other thumb.
+4. Drag the circular joystick to move and tap **Đặt bom** with your other thumb. The joystick also works with a mouse. Keyboard shortcuts are **arrow keys** to move, **Space** to place a balloon, **R** to throw with a glove, and **E** to detonate with the remote.
 5. Break crates to reveal upgrades. Water traps players in bubbles. Touch a trapped teammate to rescue them or a trapped opponent to eliminate them. The last surviving team or player wins. A round that reaches the time limit is a draw.
 6. Ready up for a rematch or return to the lobby. A room with an open slot can admit spectators during a match.
 

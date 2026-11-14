@@ -11,8 +11,7 @@ const items = {
   kick: 'Đá bóng', glove: 'Găng ném', shield: 'Khiên', remote: 'Điều khiển nổ', star: 'Ngôi sao',
 };
 const directionKeys = {
-  ArrowUp: [0, -1], w: [0, -1], ArrowLeft: [-1, 0], a: [-1, 0],
-  ArrowDown: [0, 1], s: [0, 1], ArrowRight: [1, 0], d: [1, 0],
+  ArrowUp: 'up', ArrowLeft: 'left', ArrowDown: 'down', ArrowRight: 'right',
 };
 const directions = { up: [0, -1], left: [-1, 0], down: [0, 1], right: [1, 0] };
 const effects = {
@@ -37,7 +36,7 @@ const initialAvatar = stored('bb_avatar', 'frog_kid');
 const state = {
   avatar: names[initialAvatar] ? initialAvatar : 'frog_kid', nick: stored('bb_nick', ''),
   room: '', id: '', socket: null, world: null, retries: 0, lastEvent: 0, seq: 0,
-  keys: new Set(), touch: null, overview: stored('bb_camera', 'on') === 'off',
+  keys: new Set(), stick: null, overview: stored('bb_camera', 'off') === 'off',
   pending: false, ready: false, chatIds: new Set(),
 };
 function volume(key, fallback) {
@@ -60,6 +59,8 @@ function status(text, connected = false) {
 function toast(text, duration = 2400) {
   const node = $('gameToast');
   clearTimeout(toast.timer);
+  const container = state.world?.state === 'playing' ? $('arena') : document.body;
+  if (node.parentNode !== container) container.append(node);
   node.textContent = text;
   node.hidden = false;
   toast.timer = setTimeout(() => { node.hidden = true; }, duration);
@@ -162,6 +163,9 @@ function enter(rawCode, fromSearch = false) {
   state.chatIds.clear();
   state.inventoryKey = '';
   $('shareRoom').hidden = false;
+  $('roomTag').hidden = false;
+  $('matchTitle').textContent = 'Phòng chờ';
+  $('matchCount').textContent = '';
   $('timer').textContent = '02:45';
   $('chatMessages').replaceChildren();
   $('currentRoom').textContent = code;
@@ -199,13 +203,13 @@ function leave(explicit = true) {
   arena.reset();
   $('gameScreen').hidden = true;
   $('arena').hidden = true;
-  $('mobileControls').hidden = true;
-  $('keyboardHelp').hidden = true;
+  $('playControls').hidden = true;
   $('statsPanel').hidden = true;
   $('soundPanel').hidden = true;
   $('audioSettings').setAttribute('aria-expanded', 'false');
   document.body.classList.remove('in-match');
   $('homeScreen').hidden = false;
+  $('gameToast').hidden = true;
   history.replaceState({}, '', location.pathname);
   status('Sẵn sàng', true);
   refreshRooms();
@@ -266,22 +270,32 @@ function receive(world) {
   if (!first && world.state === 'finished' && previous?.state !== 'finished') {
     audio.play(winner(localPlayer(), world) ? 'victory_jingle' : 'defeat_jingle');
   }
-  if (world.round !== previous?.round && world.state === 'playing') clearInput();
   const active = world.state === 'playing';
   const me = localPlayer();
-  $('arena').hidden = $('keyboardHelp').hidden = $('statsPanel').hidden = !active;
-  $('mobileControls').hidden = !active || me?.spectator;
+  const wasActive = previous?.state === 'playing';
+  if (active !== wasActive || world.round !== previous?.round || ((!me?.alive || me.trapped) && state.stick)) clearInput();
+  $('arena').hidden = $('statsPanel').hidden = !active;
+  $('playControls').hidden = !active || !me || me.spectator;
+  $('zoomMap').hidden = !me?.alive;
+  const controlsDisabled = !me?.alive || me?.trapped || Boolean(world.countdown);
+  $('mobileBomb').disabled = controlsDisabled;
   $('boardOverlay').hidden = active;
   $('shareRoom').hidden = world.practice;
+  $('roomTag').hidden = world.practice;
+  $('matchTitle').textContent = world.practice ? 'Tập chơi' : maps[world.map].name;
   document.body.classList.toggle('in-match', active);
-  if (active !== (previous?.state === 'playing')) window.scrollTo(0, 0);
+  if (active !== wasActive) {
+    $('gameToast').hidden = true;
+    window.scrollTo(0, 0);
+  }
   const mins = String(Math.floor(world.time / 60)).padStart(2, '0');
   $('timer').textContent = mins + ':' + String(world.time % 60).padStart(2, '0');
-  $('playerCounter').textContent = `${world.players.filter(player => player.connected).length} / ${world.practice ? 1 : 8}`;
+  const count = `${world.players.filter(player => player.connected).length} / ${world.practice ? 1 : 8}`;
+  $('playerCounter').textContent = $('matchCount').textContent = count;
   if (active) arena.receive(world, maps[world.map], state.id);
   else renderRoom(world);
   renderRoster(world);
-  if (active) renderInventory(me);
+  if (active) renderInventory(me, controlsDisabled);
 }
 
 function localPlayer() {
@@ -388,36 +402,45 @@ function renderRoster(world) {
   }));
 }
 
-function renderInventory(me) {
+function renderInventory(me, controlsDisabled) {
   if (!me) return;
   const owned = { ...me, speed: me.speed > 3, water_range: me.power > 2,
     extra_balloon: me.capacity > 1, skates: me.skates };
-  const key = JSON.stringify([me.spectator, me.speed, me.power, me.capacity, me.skates, me.kick, me.glove, me.remote, me.shield, me.star]);
+  const key = JSON.stringify([controlsDisabled, me.spectator, me.speed, me.power, me.capacity, me.skates, me.kick, me.glove, me.remote, me.shield, me.star]);
   if (state.inventoryKey === key) return;
   state.inventoryKey = key;
   for (const img of $('inventory').children) img.style.opacity = owned[img.dataset.kind] ? '1' : '.45';
   $('myStats').textContent = me.spectator ? 'Đang xem trận đấu' :
     `Bóng ${me.capacity} · Sức nước ${me.power} · Tốc độ ${me.speed.toFixed(1)}`;
-  $('mobileThrow').disabled = !me.glove;
-  $('mobileRemote').disabled = !me.remote;
+  $('mobileThrow').hidden = !me.glove;
+  $('mobileRemote').hidden = !me.remote;
+  $('mobileThrow').disabled = $('mobileRemote').disabled = controlsDisabled;
 }
 
-function move(force = false) {
+function move(keepAlive = false) {
   if (state.world?.state !== 'playing') return;
   const key = [...state.keys].at(-1);
-  const [dx, dy] = directions[state.touch?.dir] || directionKeys[key] || [0, 0];
-  const direction = dx + ',' + dy;
-  if (force || state.sentDirection !== direction || direction !== '0,0') {
-    state.sentDirection = direction;
-    send({ type: 'input', dx, dy, seq: ++state.seq });
-  }
+  const dir = state.stick ? state.stick.direction : directionKeys[key];
+  $('joystick').dataset.active = dir || '';
+  if (state.sentDirection === dir && !(keepAlive && dir)) return;
+  const [dx, dy] = directions[dir] || [0, 0];
+  if (send({ type: 'input', dx, dy, seq: ++state.seq })) state.sentDirection = dir;
+}
+
+function resetStick() {
+  const stick = $('joystick');
+  const pointer = state.stick?.id;
+  state.stick = null;
+  if (pointer !== undefined && stick.hasPointerCapture(pointer)) stick.releasePointerCapture(pointer);
+  stick.classList.remove('grabbed');
+  stick.style.removeProperty('--stick-x');
+  stick.style.removeProperty('--stick-y');
 }
 
 function clearInput() {
   state.keys.clear();
-  state.touch = null;
-  for (const button of $('dpad').children) button.classList.remove('pressed');
-  move(true);
+  resetStick();
+  move();
 }
 
 function act(type) {
@@ -434,7 +457,8 @@ function updateAudioControls() {
 
 function updateCameraButton() {
   $('zoomMap').setAttribute('aria-pressed', String(state.overview));
-  $('zoomMap').textContent = state.overview ? 'Theo nhân vật' : 'Toàn bản đồ';
+  $('zoomMap').setAttribute('aria-label', state.overview ? 'Bật camera theo nhân vật' : 'Xem toàn bản đồ');
+  $('cameraLabel').textContent = state.overview ? 'Theo nhân vật' : 'Toàn bản đồ';
 }
 
 function bind() {
@@ -496,35 +520,44 @@ function bind() {
 }
 
 function bindControls() {
-  function touchDirection(event) {
-    const pad = $('dpad');
-    const hit = document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-dir]');
-    if (hit && pad.contains(hit)) state.touch.dir = hit.dataset.dir;
-    else {
-      const rect = pad.getBoundingClientRect();
-      const x = event.clientX - rect.left - rect.width / 2, y = event.clientY - rect.top - rect.height / 2;
-      state.touch.dir = Math.hypot(x, y) < 10 ? '' : Math.abs(x) > Math.abs(y) ?
-        (x < 0 ? 'left' : 'right') : (y < 0 ? 'up' : 'down');
+  const stick = $('joystick');
+  function readStick(event) {
+    const bounds = stick.getBoundingClientRect();
+    const radius = bounds.width / 2;
+    const x = event.clientX - bounds.left - radius;
+    const y = event.clientY - bounds.top - radius;
+    const distance = Math.hypot(x, y);
+    const scale = Math.min(1, radius * .55 / Math.max(distance, 1));
+    const previous = state.stick.direction;
+    const deadZone = previous ? .15 : .21;
+    let direction;
+    if (distance >= radius * deadZone) {
+      const horizontal = Math.abs(x), vertical = Math.abs(y);
+      const margin = previous === 'left' || previous === 'right' ? .86 : previous ? 1.16 : 1;
+      direction = horizontal > vertical * margin ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up');
     }
-    for (const button of pad.children) button.classList.toggle('pressed', button.dataset.dir === state.touch.dir);
+    state.stick.direction = direction;
+    stick.style.setProperty('--stick-x', `${x * scale}px`);
+    stick.style.setProperty('--stick-y', `${y * scale}px`);
     move();
   }
-  $('dpad').addEventListener('pointerdown', event => {
-    if (state.touch || event.button !== 0) return;
+  stick.addEventListener('pointerdown', event => {
+    const player = localPlayer();
+    if (state.stick || event.button !== 0 || !player?.alive || player.trapped) return;
     event.preventDefault();
-    state.touch = { id: event.pointerId, dir: '' };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    touchDirection(event);
+    state.stick = { id: event.pointerId };
+    stick.setPointerCapture(event.pointerId);
+    stick.classList.add('grabbed');
+    readStick(event);
   });
-  $('dpad').addEventListener('pointermove', event => {
-    if (state.touch?.id === event.pointerId) touchDirection(event);
+  stick.addEventListener('pointermove', event => {
+    if (state.stick?.id === event.pointerId) readStick(event);
   });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-    $('dpad').addEventListener(type, event => {
-      if (state.touch?.id !== event.pointerId) return;
-      state.touch = null;
-      for (const button of $('dpad').children) button.classList.remove('pressed');
-      move(true);
+    stick.addEventListener(type, event => {
+      if (state.stick?.id !== event.pointerId) return;
+      resetStick();
+      move();
     });
   }
   for (const [id, action] of [['mobileBomb', 'bomb'], ['mobileThrow', 'throw'], ['mobileRemote', 'detonate']]) {
@@ -545,11 +578,11 @@ function bindControls() {
       event.preventDefault();
       if (event.repeat) return;
       if (action) act(action);
-      else { state.keys.add(key); move(true); }
+      else { state.keys.add(key); move(); }
     }
   });
   window.addEventListener('keyup', event => {
-    if (state.keys.delete(event.key.length === 1 ? event.key.toLowerCase() : event.key)) move(true);
+    if (state.keys.delete(event.key)) move();
   });
   window.addEventListener('blur', clearInput);
   window.addEventListener('pagehide', clearInput);
@@ -557,7 +590,7 @@ function bindControls() {
   document.addEventListener('focusin', event => { if (event.target.matches('input, select, textarea')) clearInput(); });
   document.addEventListener('click', () => audio.unlock(), { capture: true });
   window.addEventListener('keydown', () => audio.unlock(), { capture: true });
-  setInterval(move, 100);
+  setInterval(() => move(true), 100);
 }
 
 async function boot() {

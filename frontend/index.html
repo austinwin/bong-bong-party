@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#085ca3">
+  <meta name="theme-color" content="#102536">
   <meta name="description" content="Bong Bong Party — đấu bóng nước cùng bạn bè.">
   <title>Bong Bong Party · Đấu bóng nước</title>
   <link rel="icon" href="/assets/05_water_balloons/balloon_01.png">
@@ -13,7 +13,7 @@
   <div class="shell">
     <header class="main-header">
       <button id="logo" class="brand" aria-label="Bong Bong Party, về sảnh">
-        <img src="/assets/05_water_balloons/balloon_02.png" alt="">
+        <span class="brand-icon"><img src="/assets/05_water_balloons/balloon_02.png" alt=""></span>
         <span>BONG BONG <b>PARTY</b></span>
       </button>
       <div class="header-actions">
@@ -28,11 +28,15 @@
     <main>
       <section id="homeScreen" class="home-screen" aria-label="Sảnh chờ">
         <section class="lobby-art" aria-label="Đại chiến bóng nước">
-          <div class="lobby-art-copy"><h1>Đại chiến<br>bóng nước</h1></div>
-          <img class="hero-sprite duck" src="/assets/01_characters/duckling.png" alt="">
-          <img class="hero-sprite frog" src="/assets/01_characters/frog_kid.png" alt="">
-          <img class="hero-sprite berry" src="/assets/01_characters/berry_pixie.png" alt="">
-          <img class="hero-sprite splash" src="/assets/06_water_blasts/water_burst_03.png" alt="">
+          <div class="lobby-art-copy"><h1>Đại chiến<br><em>bóng nước</em></h1></div>
+          <div class="lobby-scene" aria-hidden="true">
+            <img class="hero-sprite crate" src="/assets/03_obstacles/wood_crate.png" alt="">
+            <img class="hero-sprite shrub" src="/assets/03_obstacles/bush.png" alt="">
+            <img class="hero-sprite duck" src="/assets/01_characters/duckling.png" alt="">
+            <img class="hero-sprite frog" src="/assets/01_characters/frog_kid.png" alt="">
+            <img class="hero-sprite berry" src="/assets/01_characters/berry_pixie.png" alt="">
+            <img class="hero-sprite balloon" src="/assets/05_water_balloons/balloon_03.png" alt="">
+          </div>
         </section>
         <div class="lobby-main">
           <section class="profile-panel panel">
@@ -65,21 +69,27 @@
             </div>
           </section>
         </div>
-        <div class="lobby-help"><div id="itemPreview" class="item-preview" aria-label="Vật phẩm"></div><span>WASD / ↑ ↓ ← → di chuyển · Space đặt bóng · R ném · E kích nổ</span></div>
+        <div class="lobby-help"><div id="itemPreview" class="item-preview" aria-label="Vật phẩm"></div></div>
       </section>
 
       <section id="gameScreen" class="game-screen" hidden>
         <div class="game-top panel">
-          <button id="leaveRoom" class="blue-button">‹ Thoát</button>
-          <div class="game-room-id">Phòng <strong id="currentRoom"></strong></div>
-          <div class="hud-timer">Thời gian <strong id="timer">02:45</strong></div>
-          <button id="shareRoom" class="blue-button">Mời bạn</button>
+          <div class="game-room-id"><strong id="matchTitle">Phòng chờ</strong><span id="roomTag">#<span id="currentRoom"></span></span></div>
+          <div class="match-meters">
+            <div class="hud-timer" aria-label="Thời gian"><span class="clock-face" aria-hidden="true"></span><strong id="timer">02:45</strong></div>
+            <div class="hud-count" aria-label="Người chơi"><span class="people-icon" aria-hidden="true"></span><span id="matchCount"></span></div>
+          </div>
+          <div class="match-actions">
+            <button id="shareRoom" class="blue-button">Mời bạn</button>
+            <button id="leaveRoom" class="blue-button"><span aria-hidden="true">×</span> Thoát</button>
+          </div>
         </div>
         <div class="game-body">
           <div class="play-panel panel">
             <div class="arena-wrap" id="arena" hidden>
-              <canvas id="gameCanvas" width="960" height="832" aria-label="Sân chơi đặt bóng nước" role="img"></canvas>
-              <button id="zoomMap" class="blue-button" aria-pressed="false">Toàn bản đồ</button>
+              <div class="arena-board">
+                <canvas id="gameCanvas" width="960" height="832" aria-label="Sân chơi đặt bóng nước" role="img"></canvas>
+              </div>
             </div>
             <section id="boardOverlay" class="room-card" aria-labelledby="overlayTitle">
               <div class="panel-heading"><h2 id="overlayTitle">Phòng chờ</h2><span id="overlayDesc"></span></div>
@@ -101,14 +111,25 @@
                 </div>
               </div>
             </section>
-            <div class="mobile-controls" id="mobileControls" hidden>
-              <div id="dpad" class="dpad" aria-label="Điều khiển di chuyển"><button data-dir="up" aria-label="Lên">▲</button><button data-dir="left" aria-label="Trái">◀</button><button data-dir="down" aria-label="Xuống">▼</button><button data-dir="right" aria-label="Phải">▶</button></div>
-              <div class="mobile-actions">
-                <button id="mobileBomb" class="bomb-action" aria-label="Đặt bóng nước"><img src="/assets/05_water_balloons/balloon_01.png" alt=""><span>Đặt bóng</span></button>
-                <div class="action-extras"><button id="mobileThrow" class="blue-button" aria-label="Ném bóng">Ném</button><button id="mobileRemote" class="blue-button" aria-label="Kích nổ bóng">Nổ</button></div>
+            <div class="play-controls" id="playControls" hidden>
+              <div id="joystick" class="joystick" aria-label="Cần điều khiển di chuyển" role="group">
+                <span class="stick-mark" data-direction="up" aria-hidden="true"></span>
+                <span class="stick-mark" data-direction="left" aria-hidden="true"></span>
+                <span class="stick-mark" data-direction="down" aria-hidden="true"></span>
+                <span class="stick-mark" data-direction="right" aria-hidden="true"></span>
+                <span class="stick-well" aria-hidden="true"></span>
+                <span class="stick-knob" aria-hidden="true"></span>
               </div>
+              <div class="control-center">
+                <button id="zoomMap" class="blue-button" aria-pressed="true"><span class="map-icon" aria-hidden="true"></span><span id="cameraLabel">Theo nhân vật</span></button>
+                <div class="keyboard-help"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> Di chuyển</span><span><kbd>Space</kbd> Đặt bom</span></div>
+                <div class="action-extras">
+                  <button id="mobileThrow" class="blue-button" aria-label="Ném bóng" title="Ném bóng (R)" hidden><img src="/assets/04_powerups/glove.png" alt="">Ném</button>
+                  <button id="mobileRemote" class="blue-button" aria-label="Kích nổ bóng" title="Kích nổ bóng (E)" hidden><img src="/assets/04_powerups/remote.png" alt="">Kích nổ</button>
+                </div>
+              </div>
+              <button id="mobileBomb" class="bomb-action" aria-label="Đặt bóng nước"><img src="/assets/05_water_balloons/balloon_01.png" alt=""><span>Đặt bom</span></button>
             </div>
-            <div class="keyboard-help" id="keyboardHelp" hidden>WASD / ↑ ↓ ← → di chuyển · Space đặt bóng · R ném · E kích nổ</div>
           </div>
           <aside class="game-side">
             <section class="panel roster-panel"><h2 class="panel-heading">Người chơi <span id="playerCounter">0 / 8</span></h2><div id="roster" class="roster"></div></section>
