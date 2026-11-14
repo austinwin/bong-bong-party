@@ -872,7 +872,7 @@ async def room_socket(ws:WebSocket,code:str) -> None:
             room.event('leave' if left else 'disconnect', who=player.id)
             broadcast(room, time.monotonic())
         if left:
-            with suppress(RuntimeError):
+            with suppress(RuntimeError, WebSocketDisconnect):
                 await ws.close(code=1000)
 
 
