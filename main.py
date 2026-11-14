@@ -40,6 +40,8 @@ AUTH_KEY = (os.environ.get('BB_AUTH_SECRET') or secrets.token_urlsafe(48)).encod
 REVISION = os.getenv('RENDER_GIT_COMMIT', 'local')
 ASSET_ROOT = Path(__file__).resolve().parent / 'frontend' / 'assets'
 AUDIO_ASSETS = frozenset(json.loads((ASSET_ROOT / 'asset_manifest.json').read_text())['categories']['08_audio'])
+ARCADE_AUDIO = frozenset(('lobby_parade', 'balloon_rally', 'place', 'throw', 'splash',
+                          'prize', 'bubble', 'rescue', 'pop', 'go', 'step'))
 STARTS = [(1, 1), (13, 11), (13, 1), (1, 11), (7, 1), (7, 11), (1, 6), (13, 6)]
 AVATARS = ('berry_pixie', 'cloud_tech', 'duckling', 'fox_scout', 'frog_kid', 'little_bat', 'night_wizard', 'turtle_scholar')
 MAPS = {
@@ -145,6 +147,7 @@ class Player:
     last_bomb: float = 0
     last_action: float = 0
     last_chat: float = 0
+    last_cheer: float = 0
     socket: WebSocket | None = field(default=None, repr=False)
     outgoing: asyncio.Queue | None = field(default=None, repr=False, compare=False)
 
@@ -388,7 +391,7 @@ class Room:
         self.bombs[tile] = Bomb(*tile, player.id, now + (8 if player.remote else FUSE_SECONDS),
                                 player.power, owner_exited=thrown, remote=player.remote, placed_at=now,
                                 launched_from=origin if thrown else None)
-        self.event('bomb', x=tile[0], y=tile[1], who=player.id)
+        self.event('bomb', x=tile[0], y=tile[1], who=player.id, thrown=thrown)
         if any((b.x, b.y) == tile and b.until > now for b in self.blasts):
             self.explode(tile, now)
         return True
@@ -470,23 +473,7 @@ class Room:
                 continue
             if now-p.last_input > .45:
                 p.dx = p.dy = 0
-            distance = dt*p.speed
-            if p.dx:
-                xx = p.x+distance*p.dx
-                if not self.collision(xx, p.y, p, now, (p.dx,0)):
-                    p.x=xx
-                target = math.floor(p.y)+.5
-                drift = max(-dt*2.7, min(dt*2.7, target-p.y))
-                if not self.collision(p.x, p.y+drift, p):
-                    p.y+=drift
-            elif p.dy:
-                yy = p.y+distance*p.dy
-                if not self.collision(p.x, yy, p, now, (0,p.dy)):
-                    p.y=yy
-                target = math.floor(p.x)+.5
-                drift = max(-dt*2.7, min(dt*2.7, target-p.x))
-                if not self.collision(p.x+drift, p.y, p):
-                    p.x+=drift
+            self.move_player(p, dt, now)
             for bomb in self.bombs.values():
                 if bomb.owner == p.id and not bomb.owner_exited:
                     if (p.x-bomb.x-.5)**2+(p.y-bomb.y-.5)**2 > .78**2:
@@ -528,7 +515,7 @@ class Room:
             if p.trapped_until and now >= p.trapped_until:
                 p.alive=False
                 p.trapped_until=0
-                self.event('out', who=p.id)
+                self.event('out', who=p.id, x=p.x, y=p.y)
         for trapped in self.players.values():
             if not trapped.alive or trapped.trapped_until <= now:
                 continue
@@ -546,7 +533,7 @@ class Room:
                     trapped.alive=False
                     trapped.trapped_until=0
                     rescuer.score+=1
-                    self.event('out', who=trapped.id)
+                    self.event('out', who=trapped.id, x=trapped.x, y=trapped.y)
                 break
         if self.practice and self.players and not any(p.alive for p in self.players.values()):
             self.finish('draw')
@@ -560,6 +547,24 @@ class Room:
                 self.finish(living[0].id if living else 'draw')
         if self.state=='playing' and now>=self.round_end:
             self.finish('draw')
+
+    def move_player(self, p: Player, dt: float, now: float) -> None:
+        if not (p.dx or p.dy):
+            return
+        nx, ny = p.x + dt * p.speed * p.dx, p.y + dt * p.speed * p.dy
+        blocked = self.collision(nx, ny, p, now, (p.dx, p.dy))
+        if not blocked:
+            p.x, p.y = nx, ny
+        centered_x = p.x if p.dx else math.floor(p.x) + .5
+        centered_y = p.y if p.dy else math.floor(p.y) + .5
+        # Near a junction, help the player line up with the open lane they are turning into.
+        turning = blocked and not self.collision(centered_x + dt * p.speed * p.dx,
+                                                  centered_y + dt * p.speed * p.dy, p)
+        limit = dt * (6 if turning else 2.7)
+        sx = p.x + max(-limit, min(limit, centered_x - p.x))
+        sy = p.y + max(-limit, min(limit, centered_y - p.y))
+        if not self.collision(sx, sy, p):
+            p.x, p.y = sx, sy
 
     def finish(self, winner: str) -> None:
         if self.state != 'playing':
@@ -583,7 +588,8 @@ class Room:
             'countdown': max(0,math.ceil(self.countdown_end-now)) if self.state=='playing' else 0,
             'players':[p.snapshot(now) for p in self.players.values()],
             'bombs': [{'x': b.x, 'y': b.y, 'age': round(now - b.placed_at, 2), 'remote': b.remote,
-                       'from': b.launched_from} for b in self.bombs.values()],
+                       'from': b.launched_from, 'owner': b.owner,
+                       'pass': None if b.owner_exited else b.owner} for b in self.bombs.values()],
             'blasts':[[b.x,b.y,max(0,round(b.until-now,2))] for b in self.blasts],
             'pickups':[[x,y,kind] for (x,y),kind in self.pickups.items()],
             'crates':[[x,y,self.crate_types.get((x,y),'wood_crate')] for x,y in self.crates],
@@ -679,15 +685,23 @@ def session(request:Request,response:Response) -> dict[str,str]:
 
 @app.get('/api/assets')
 def assets() -> dict[str,Any]:
-    return {'avatars':list(AVATARS),'maps':MAPS,'items':list(ITEMS)}
+    return {'avatars':list(AVATARS),'maps':MAPS,'items':list(ITEMS),'arcadeAudio':sorted(ARCADE_AUDIO)}
 
 
 @app.get('/assets/08_audio/{name}')
-def audio_asset(name: str) -> FileResponse:
+def original_audio_asset(name: str) -> FileResponse:
     # QPyServe's plain-HTML file set does not include WAV.
     if name not in AUDIO_ASSETS:
         raise HTTPException(404)
     return FileResponse(ASSET_ROOT / '08_audio' / name, media_type='audio/wav',
+                        headers={'Cache-Control': 'public, max-age=86400'})
+
+
+@app.get('/assets/13_audio/{name}')
+def arcade_audio_asset(name: str) -> FileResponse:
+    if not name.endswith('.wav') or name.removesuffix('.wav') not in ARCADE_AUDIO:
+        raise HTTPException(404)
+    return FileResponse(ASSET_ROOT / '13_audio' / name, media_type='audio/wav',
                         headers={'Cache-Control': 'public, max-age=86400'})
 
 
@@ -820,6 +834,9 @@ async def room_socket(ws:WebSocket,code:str) -> None:
                     room.remote_detonate(player, now)
                 else:
                     room.place_bomb(player, now, thrown=kind == 'throw')
+            elif kind == 'cheer' and room.can_act(player, now) and now - player.last_cheer >= 2:
+                player.last_cheer = now
+                room.event('cheer', who=player.id)
             elif kind == 'leave':
                 left = True
                 break
@@ -880,4 +897,4 @@ if __name__=='__main__':
     from qpyserve import run
     production='--prod' in sys.argv[1:] or os.getenv('QPYSERVE_MODE')=='production'
     run(app,frontend='frontend',host='0.0.0.0' if production else '127.0.0.1',
-        port=int(os.getenv('PORT','10000')),workers=1,api_paths=['/ws', '/assets/08_audio'])
+        port=int(os.getenv('PORT','10000')),workers=1,api_paths=['/ws', '/assets/08_audio', '/assets/13_audio'])

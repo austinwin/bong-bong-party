@@ -25,6 +25,7 @@
         <div><button id="musicToggle" class="blue-button" aria-pressed="true">Nhạc nền</button><input aria-label="Âm lượng nhạc" type="range" id="musicVolume" min="0" max="100" value="55"></div>
         <div><button id="soundToggle" class="blue-button" aria-pressed="true">Hiệu ứng</button><input aria-label="Âm lượng hiệu ứng" type="range" id="sfxVolume" min="0" max="100" value="70"></div>
         <button id="testSound" class="gold-button" type="button">Thử âm thanh</button>
+        <button id="hapticsToggle" class="blue-button" type="button" aria-pressed="true" hidden>Rung khi chơi</button>
       </section>
     </header>
     <main>
@@ -123,7 +124,10 @@
                 <span class="stick-knob" aria-hidden="true"></span>
               </div>
               <div class="control-center">
-                <button id="zoomMap" class="blue-button" aria-pressed="true"><span class="map-icon" aria-hidden="true"></span><span id="cameraLabel">Toàn bản đồ</span></button>
+                <div class="control-utilities">
+                  <button id="zoomMap" class="blue-button" aria-pressed="true"><span class="map-icon" aria-hidden="true"></span><span id="cameraLabel">Toàn bản đồ</span></button>
+                  <button id="cheer" class="blue-button" type="button" aria-label="Cổ vũ" title="Cổ vũ"><img src="/assets/04_powerups/star.png" alt=""><span>Cổ vũ</span></button>
+                </div>
                 <div class="keyboard-help"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> Di chuyển</span><span><kbd>Space</kbd> Đặt bom</span></div>
                 <div class="action-extras">
                   <button id="mobileThrow" class="blue-button" aria-label="Ném bóng" title="Ném bóng (R)" hidden><img src="/assets/04_powerups/glove.png" alt="">Ném</button>

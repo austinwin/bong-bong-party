@@ -56,9 +56,9 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await page.locator('#nickname').fill('Ếch QA');
     await page.locator('#nickname').blur();
     await press(page.getByRole('button', { name: 'Ếch Xanh', exact: true }));
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(11);
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.state === 'running'))).toBeTruthy();
-    expect(first.downloads.size).toBe(11);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(22);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 33 && clip.state === 'running'))).toBeTruthy();
+    expect(first.downloads.size).toBe(22);
     await expect(page.getByRole('button', { name: 'Tạo phòng' })).toBeInViewport();
     if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/${info.project.name}-lobby.png` });
 
@@ -88,6 +88,7 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
 
     await press(page.getByRole('button', { name: 'Bắt đầu' }));
     await expect(page.locator('#gameCanvas')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 26 && clip.seconds < 28))).toBeTruthy();
     await expect.poll(() => first.state().countdown).toBeGreaterThan(0);
     await page.keyboard.press('Space');
     await expect.poll(() => first.state().countdown).toBe(0);
@@ -95,6 +96,11 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await expect(page.getByRole('button', { name: 'Đặt bóng nước' })).toBeInViewport();
     await expect(page.locator('#joystick')).toBeInViewport();
     if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/${info.project.name}-arena.png` });
+    const firstId = first.history.findLast(frame => frame.type === 'welcome').id;
+    const cheer = page.getByRole('button', { name: 'Cổ vũ', exact: true });
+    await press(cheer);
+    await expect(cheer).toBeDisabled();
+    await expect.poll(() => second.state().events.some(event => event.type === 'cheer' && event.who === firstId)).toBeTruthy();
     const peerId = second.history.findLast(frame => frame.type === 'welcome').id;
     const revision = second.state().revision;
     await peer.keyboard.down('a');
@@ -129,7 +135,7 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await expect(page.locator('#overlayTitle')).toHaveText('Kết thúc trận', { timeout: 10000 });
     await expect(peer.locator('#overlayTitle')).toHaveText('Chiến thắng!');
     await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.map(clip => Math.round(clip.seconds * 100)))).toEqual(
-      expect.arrayContaining([10, 19, 34, 35, 42, 98])
+      expect.arrayContaining([10, 19, 24, 34, 35, 42, 98])
     );
     await expect(page.getByRole('button', { name: 'Chơi lại' })).toBeDisabled();
     await press(peer.getByRole('button', { name: 'Sẵn sàng', exact: true }));
@@ -183,7 +189,7 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await expect(page.locator('#arena')).toBeVisible();
   for (const viewport of [{ width: 320, height: 568 }, { width: 750, height: 342 }]) {
     await page.setViewportSize(viewport);
-    for (const id of ['gameCanvas', 'joystick', 'mobileBomb', 'audioSettings']) {
+    for (const id of ['gameCanvas', 'joystick', 'mobileBomb', 'audioSettings', 'zoomMap', 'cheer']) {
       await expect(page.locator('#' + id)).toBeInViewport({ ratio: .99 });
     }
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
@@ -233,17 +239,50 @@ test('phone camera enlarges the kit-inspired costumes and can return to the full
   await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeCloseTo(originalScale);
 });
 
-test('touch movement and balloon placement can run together', async ({ page, context }, info) => {
+test('touch predicts movement during delayed snapshots and can plant a balloon with a second finger', async ({ page, context }, info) => {
   test.skip(info.project.name !== 'android-chromium', 'Uses native Chromium multitouch input.');
   const record = monitor(page);
+  let hold = false;
+  let held;
+  let relay;
+  let delivered;
+  const motion = new Set();
+  page.on('response', response => {
+    if (response.ok() && response.url().includes('/12_motion/')) motion.add(response.url());
+  });
+  await page.routeWebSocket('**/ws/**', socket => {
+    const server = socket.connectToServer();
+    relay = socket;
+    server.onMessage(message => {
+      const frame = JSON.parse(message);
+      if (hold && frame.type === 'state') {
+        held = message;
+      } else {
+        if (frame.type === 'state') delivered = frame;
+        socket.send(message);
+      }
+    });
+  });
+  await page.addInitScript(() => {
+    const original = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+      if (this.canvas.id === 'gameCanvas' && /\/(10_costumes|12_motion)\//.test(args[0].src || '')) {
+        const path = new URL(args[0].src).pathname;
+        window.costumeFrame = { path, x: this.getTransform().e };
+        (window.runFrames ??= new Set()).add(path);
+      }
+      return original.apply(this, args);
+    };
+  });
   await page.goto('/');
   await page.getByRole('button', { name: 'Tập chơi' }).tap();
   await page.getByRole('button', { name: 'Bắt đầu' }).tap();
-  await expect.poll(() => record.state().countdown).toBe(0);
+  const bombButton = page.getByRole('button', { name: 'Đặt bóng nước' });
+  await expect(bombButton).toBeEnabled();
   const stick = page.locator('#joystick');
   await expect(stick).toBeInViewport();
   const bounds = await stick.boundingBox();
-  const bomb = await page.getByRole('button', { name: 'Đặt bóng nước' }).boundingBox();
+  const bomb = await bombButton.boundingBox();
   const devtools = await context.newCDPSession(page);
   const point = (box, id) => ({ x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2), id });
   const center = point(bounds, 1);
@@ -251,18 +290,28 @@ test('touch movement and balloon placement can run together', async ({ page, con
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [center] });
   await expect(stick).toHaveClass(/grabbed/);
   await expect(stick).toHaveAttribute('data-active', '');
+  await expect.poll(() => page.evaluate(() => window.costumeFrame?.path)).toMatch(/10_costumes/);
+  const x = await page.evaluate(() => window.costumeFrame.x);
+  hold = true;
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [right] });
   await expect(stick).toHaveAttribute('data-active', 'right');
   await expect.poll(() => stick.evaluate(el => Number.parseFloat(el.style.getPropertyValue('--stick-x')))).toBeGreaterThan(10);
-  await expect.poll(() => record.state().players[0].x).toBeGreaterThan(1.85);
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.x)).toBeGreaterThan(x + 8);
+  await expect.poll(() => page.evaluate(() => window.costumeFrame.path)).toMatch(/12_motion\/.*-side/);
+  expect(delivered.players[0].x).toBe(1.5);
+  hold = false;
+  if (held) relay.send(held);
+  await expect.poll(() => delivered.players[0].x).toBeGreaterThan(1.85);
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [right, point(bomb, 2)] });
-  await expect.poll(() => record.state().bombs.length).toBe(1);
-  await expect.poll(() => record.state().players[0].x).toBeGreaterThan(2.35);
+  await expect.poll(() => delivered.bombs.length).toBe(1);
+  await expect.poll(() => delivered.players[0].x).toBeGreaterThan(2.35);
   if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/joystick-drag.png` });
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await expect(stick).not.toHaveClass(/grabbed/);
   await expect(stick).toHaveAttribute('data-active', '');
   await expect.poll(() => stick.evaluate(el => el.style.getPropertyValue('--stick-x'))).toBe('');
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+  expect(motion.size).toBe(32);
+  expect(await page.evaluate(() => [...window.runFrames].filter(path => /-side(?:-pass)?\.webp$/.test(path)))).toHaveLength(2);
   expect(record.errors).toEqual([]);
 });

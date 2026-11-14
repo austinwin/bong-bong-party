@@ -57,6 +57,18 @@ def test_collision_prevents_moving_through_walls():
     assert not r.collision(1.5,1.5,p)
 
 
+def test_touch_turn_assist_centers_an_open_lane_and_stops_at_a_crate():
+    r = make_duo()
+    r.walls, r.crates = {(2, 2)}, {(1, 3)}
+    p = r.players['a']
+    p.x, p.y, p.dx, p.dy = 1.79, 1.69, 0, 1
+    for step in range(30):
+        r.move_player(p, 1 / 30, 100 + step / 30)
+        assert not r.collision(p.x, p.y, p)
+    assert p.x == 1.5
+    assert 2.5 < p.y < 2.73
+
+
 def test_traps_rescue_and_victory():
     r=make_duo()
     r.crates=set()
