@@ -1,4 +1,4 @@
-import { sprite } from './media.js';
+import { costume, scenery, sprite } from './media.js';
 
 const W = 15, H = 13, TILE = 64, WIDTH = W * TILE, HEIGHT = H * TILE;
 const PULSE_MS = [180, 180, 150, 150];
@@ -6,6 +6,28 @@ const SPLASH_MS = [70, 70, 85, 95, 85, 85];
 const WATER = '06_water_blasts';
 const TRIM = { wood: 'cobble', grass: 'sand', pink: 'cobble', ice: 'stone', cobble: 'stone',
   sand: 'cobble', stone: 'cobble', water: 'wood' };
+const STAGES = {
+  wood: { field: '#529b65', edge: '#346942', wall: '#f5c595', props: ['lantern_house', 'topiary', 'toadstool'] },
+  grass: { field: '#579b55', edge: '#2c653b', wall: '#b6e296', props: ['toadstool', 'topiary', 'lantern_house'] },
+  pink: { field: '#d284ad', edge: '#923f71', wall: '#faddbe', props: ['toadstool', 'lantern_house', 'topiary'] },
+  ice: { field: '#89c9e7', edge: '#437fa6', wall: '#c1efff', props: ['blue_house', 'snow_pine', 'snow_pine'] },
+  cobble: { field: '#7f9d8f', edge: '#485c67', wall: '#cedddb', props: ['blue_house', 'topiary', 'lantern_house'] },
+  sand: { field: '#e2b86b', edge: '#ac7748', wall: '#fbd28a', props: ['palm', 'lantern_house', 'palm'] },
+  stone: { field: '#8781c7', edge: '#575293', wall: '#d7cbfb', props: ['blue_house', 'topiary', 'blue_house'] },
+  water: { field: '#50adbc', edge: '#21697d', wall: '#baf5ee', props: ['palm', 'blue_house', 'palm'] },
+};
+const BORDER_X = 24, BORDER_Y = 112;
+const SCENE_W = WIDTH + BORDER_X * 2, SCENE_H = HEIGHT + BORDER_Y * 2;
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function followOffset(coordinate, view, extent) {
+  const margin = 5;
+  if (view >= extent + 2 * margin) return (extent - view) / 2;
+  return clamp(coordinate * TILE - view / 2, -margin, extent + margin - view);
+}
 
 function frameAt(elapsed, durations) {
   let index = 0;
@@ -27,24 +49,71 @@ function drawFloor(ctx, theme) {
       const rim = x === 0 || x === W - 1 || y === 0 || y === H - 1;
       const left = x * TILE, top = y * TILE;
       if (rim) draw(ctx, '02_floor_tiles', TRIM[theme.floor], left, top);
-      else if (floor && theme.floor === 'wood' && (x + y) % 2 === 0) {
-        ctx.save();
-        ctx.translate(left + TILE, top);
-        ctx.rotate(Math.PI / 2);
-        ctx.drawImage(floor, 0, 0, TILE, TILE);
-        ctx.restore();
-      } else if (floor) ctx.drawImage(floor, left, top, TILE, TILE);
-      ctx.fillStyle = (x + y) % 2 === 0 ? '#10243513' : '#fff5d20a';
+      else if (floor) ctx.drawImage(floor, left, top, TILE, TILE);
+      if (!rim && theme.floor === 'wood') {
+        ctx.fillStyle = (x + y) % 2 ? '#ffedc974' : '#f9dfa050';
+        ctx.fillRect(left, top, TILE, TILE);
+      }
+      ctx.fillStyle = (x + y) % 2 === 0 ? '#1024350f' : '#fff5d20a';
       ctx.fillRect(left, top, TILE, TILE);
-      ctx.strokeStyle = '#20364350';
+      ctx.strokeStyle = '#2036433d';
       ctx.strokeRect(left + .5, top + .5, TILE - 1, TILE - 1);
     }
   }
 }
 
 function drawObstacles(ctx, theme, world) {
-  for (const [x, y] of world.walls) draw(ctx, '03_obstacles', theme.solid, x * TILE, y * TILE);
-  for (const [x, y, type] of world.crates) draw(ctx, '03_obstacles', type, x * TILE, y * TILE);
+  const stage = STAGES[theme.floor];
+  for (const [x, y] of world.walls) {
+    const left = x * TILE, top = y * TILE;
+    if (x === 0 || x === W - 1 || y === 0 || y === H - 1) {
+      ctx.fillStyle = stage.edge;
+      ctx.fillRect(left, top, TILE, TILE);
+      ctx.fillStyle = stage.wall;
+      ctx.globalAlpha = .52;
+      ctx.fillRect(left + 2, top + 2, TILE - 4, TILE - 4);
+      ctx.globalAlpha = 1;
+    }
+    draw(ctx, '03_obstacles', theme.solid, left + 1, top - 2, TILE - 2);
+  }
+  for (const [x, y, type] of world.crates) draw(ctx, '03_obstacles', type, x * TILE, y * TILE - 3);
+}
+
+function drawScenicBoard(ctx, theme, world) {
+  const stage = STAGES[theme.floor];
+  const surround = ctx.createLinearGradient(0, 0, 0, HEIGHT + BORDER_Y * 2);
+  surround.addColorStop(0, stage.field);
+  surround.addColorStop(1, stage.edge);
+  ctx.fillStyle = surround;
+  ctx.fillRect(0, 0, SCENE_W, SCENE_H);
+  for (let i = 0; i < 87; i++) {
+    const x = (i * 151 + 23) % SCENE_W;
+    const y = i % 2 ? (i * 37) % 100 : HEIGHT + BORDER_Y + (i * 37) % 104;
+    ctx.globalAlpha = .13;
+    ctx.fillStyle = i % 3 ? stage.wall : stage.edge;
+    ctx.beginPath();
+    ctx.ellipse(x, y, 3 + i % 6, 2 + i % 3, -.25, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.save();
+  ctx.translate(BORDER_X, BORDER_Y);
+  ctx.fillStyle = '#143c4160';
+  ctx.fillRect(-9, -6, WIDTH + 18, HEIGHT + 20);
+  ctx.fillStyle = '#ffe2b2';
+  ctx.fillRect(-7, -7, WIDTH + 14, HEIGHT + 14);
+  drawFloor(ctx, theme);
+  drawObstacles(ctx, theme, world);
+  for (const [index, x, y, size] of [
+    [1, 7, -83, 90], [0, 103, -119, 128], [2, 345, -88, 94], [1, 555, -79, 86],
+    [0, 692, -112, 119], [2, 869, -95, 104],
+    [2, 9, HEIGHT + 5, 78], [1, 142, HEIGHT + 17, 68], [0, 280, HEIGHT + 0, 107],
+    [1, 518, HEIGHT + 7, 81], [2, 668, HEIGHT + 16, 70], [1, 847, HEIGHT + 4, 86],
+  ]) {
+    const image = scenery(stage.props[index]);
+    if (image) ctx.drawImage(image, x, y, size, size);
+  }
+  ctx.restore();
 }
 
 export function drawPreview(canvas, theme, world) {
@@ -57,12 +126,17 @@ export function drawPreview(canvas, theme, world) {
 
 export class Arena {
   constructor(canvas) {
+    this.canvas = canvas;
     this.ctx = canvas.getContext('2d', { alpha: false });
     this.base = document.createElement('canvas');
-    this.base.width = WIDTH;
-    this.base.height = HEIGHT;
+    this.base.width = SCENE_W;
+    this.base.height = SCENE_H;
     this.baseContext = this.base.getContext('2d', { alpha: false });
     this.positions = new Map();
+    this.observer = new ResizeObserver(([entry]) => {
+      this.viewport = { width: entry.contentRect.width, height: entry.contentRect.height };
+    });
+    this.observer.observe(canvas);
   }
 
   reset() {
@@ -70,6 +144,7 @@ export class Arena {
     this.positions.clear();
     this.terrain = '';
     this.round = null;
+    this.camera = null;
   }
 
   receive(world, theme, localId) {
@@ -78,9 +153,11 @@ export class Arena {
     this.received = time;
     this.localId = localId;
     this.world = world;
+    this.theme = theme;
     if (this.round !== world.round) {
       this.positions.clear();
       this.round = world.round;
+      this.camera = null;
     }
     for (const player of world.players) {
       const previous = this.positions.get(player.id);
@@ -91,8 +168,7 @@ export class Arena {
     }
     const key = world.map + JSON.stringify(world.crates);
     if (key !== this.terrain) {
-      drawFloor(this.baseContext, theme);
-      drawObstacles(this.baseContext, theme, world);
+      drawScenicBoard(this.baseContext, theme, world);
       this.terrain = key;
     }
   }
@@ -101,6 +177,15 @@ export class Arena {
     const world = this.world;
     if (world?.state !== 'playing') return;
     const ctx = this.ctx;
+    const { width, height } = this.viewport || {};
+    if (!width || !height) return;
+    const pixelRatio = Math.min(devicePixelRatio || 1, 2);
+    const canvasW = Math.round(width * pixelRatio), canvasH = Math.round(height * pixelRatio);
+    if (this.canvas.width !== canvasW || this.canvas.height !== canvasH) {
+      this.canvas.width = canvasW;
+      this.canvas.height = canvasH;
+      this.camera = null;
+    }
     const elapsed = time - this.received;
     const progress = Math.max(0, Math.min(1, elapsed / this.interval));
     for (const position of this.positions.values()) {
@@ -110,17 +195,26 @@ export class Arena {
         y: from.y + (player.y - from.y) * progress,
       };
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.imageSmoothingEnabled = false;
+    ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    ctx.fillStyle = STAGES[this.theme.floor].edge;
+    ctx.fillRect(0, 0, width, height);
+    ctx.imageSmoothingEnabled = true;
     const local = this.positions.get(this.localId);
-    if (!overview && local?.player.alive && !world.countdown) {
-      const scale = W / 10.5;
-      const viewW = WIDTH / scale, viewH = HEIGHT / scale;
-      const x = Math.max(0, Math.min(WIDTH - viewW, local.drawn.x * TILE - viewW / 2));
-      const y = Math.max(0, Math.min(HEIGHT - viewH, local.drawn.y * TILE - viewH / 2));
-      ctx.setTransform(scale, 0, 0, scale, -Math.round(x * scale), -Math.round(y * scale));
-    }
-    ctx.drawImage(this.base, 0, 0);
+    const follow = Boolean(!overview && local?.player.alive && !world.countdown);
+    const fit = Math.min(width / SCENE_W, height / SCENE_H);
+    const scale = follow ? Math.max(fit * 1.23, clamp(width / 8.6, 36, 54) / TILE) : fit;
+    const viewW = width / scale, viewH = height / scale;
+    const target = follow ? {
+      x: followOffset(local.drawn.x, viewW, WIDTH),
+      y: followOffset(local.drawn.y, viewH, HEIGHT),
+    } : { x: (WIDTH - viewW) / 2, y: (HEIGHT - viewH) / 2 };
+    if (this.camera?.follow === follow) {
+      this.camera.x += (target.x - this.camera.x) * .32;
+      this.camera.y += (target.y - this.camera.y) * .32;
+    } else this.camera = { ...target, follow };
+    ctx.scale(scale, scale);
+    ctx.translate(-this.camera.x, -this.camera.y);
+    ctx.drawImage(this.base, -BORDER_X, -BORDER_Y);
     for (const [x, y, kind] of world.pickups) {
       draw(ctx, '04_powerups', kind, x * TILE + 6, y * TILE + 6 + Math.sin(time / 240 + x) * 3, 52);
     }
@@ -130,16 +224,20 @@ export class Arena {
       this.drawPlayer(position, time);
     }
     if (world.countdown > 0) {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = '#07356ca3';
-      ctx.fillRect(0, HEIGHT * .4, WIDTH, HEIGHT * .2);
-      ctx.font = 'bold 105px Verdana';
+      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      const size = clamp(width * .21, 45, 96);
+      ctx.fillStyle = '#071b43bd';
+      ctx.beginPath();
+      ctx.arc(width / 2, height / 2, size * .68, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = `bold ${size}px Trebuchet MS, sans-serif`;
       ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.fillStyle = '#ffe774';
       ctx.strokeStyle = '#07346d';
-      ctx.lineWidth = 9;
-      ctx.strokeText(world.countdown, WIDTH / 2, HEIGHT * .54);
-      ctx.fillText(world.countdown, WIDTH / 2, HEIGHT * .54);
+      ctx.lineWidth = 5;
+      ctx.strokeText(world.countdown, width / 2, height / 2);
+      ctx.fillText(world.countdown, width / 2, height / 2);
     }
   }
 
@@ -195,38 +293,50 @@ export class Arena {
     const walking = Math.hypot(player.x - from.x, player.y - from.y) > .025 && !player.trapped;
     const phase = walking ? time / 47 : time / 400;
     const bob = Math.sin(phase) * (walking ? 3 : 1);
+    const size = 81;
+    const feet = y + 20;
     ctx.save();
     ctx.globalAlpha = player.connected ? 1 : .55;
     ctx.fillStyle = player.id === this.localId ? '#ffed5a' : player.team ? '#f47e93' : '#44bfff';
     ctx.beginPath();
-    ctx.ellipse(x, y + 18, 18, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(x, feet - 2, 24, 8, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.translate(Math.round(x), Math.round(y - 7 + bob));
-    ctx.rotate(walking ? Math.sin(phase) * .055 : 0);
+    ctx.translate(Math.round(x), Math.round(feet + bob));
+    ctx.rotate(walking ? Math.sin(phase) * .085 : 0);
     ctx.scale(player.facing?.[0] === -1 ? -1 : 1, 1);
-    draw(ctx, '01_characters', player.avatar, -32, -34);
+    const image = costume(player.avatar);
+    if (image) ctx.drawImage(image, -size / 2, -size, size, size);
     ctx.restore();
     if (player.trapped || player.shield) {
-      const radius = player.trapped ? 28 + Math.sin(time / 120) * 2 : 30;
-      const bubble = ctx.createRadialGradient(x - 9, y - 18, 1, x, y - 4, radius);
+      const radius = player.trapped ? 38 + Math.sin(time / 120) * 2 : 39;
+      const bubble = ctx.createRadialGradient(x - 11, y - 32, 1, x, y - 18, radius);
       bubble.addColorStop(0, '#bafcff8a');
       bubble.addColorStop(.66, '#45c9ff29');
       bubble.addColorStop(1, '#1996ebbd');
       ctx.beginPath();
-      ctx.arc(x, y - 4, radius, 0, Math.PI * 2);
+      ctx.arc(x, y - 18, radius, 0, Math.PI * 2);
       ctx.fillStyle = bubble;
       ctx.fill();
       ctx.strokeStyle = player.trapped ? '#d2fcff' : '#ffeb83';
       ctx.lineWidth = 3;
       ctx.stroke();
     }
-    if (player.star) draw(ctx, '04_powerups', 'star', x + 10, y - 36, 25);
+    if (player.star) draw(ctx, '04_powerups', 'star', x + 18, y - 53, 25);
     ctx.textAlign = 'center';
-    ctx.font = 'bold 15px Verdana';
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#123e68';
-    ctx.fillStyle = '#fff';
-    ctx.strokeText(player.name, x, y - 39, 103);
-    ctx.fillText(player.name, x, y - 39, 103);
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 18px Trebuchet MS, sans-serif';
+    const nameWidth = Math.min(ctx.measureText(player.name).width, 139) + 20;
+    const nameX = clamp(x, nameWidth / 2 + 3, WIDTH - nameWidth / 2 - 3);
+    const nameY = y - 67;
+    const own = player.id === this.localId;
+    ctx.fillStyle = own ? '#073968ea' : '#11264be8';
+    ctx.strokeStyle = own ? '#ffdd8c' : '#b3eaffba';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(nameX - nameWidth / 2, nameY - 12, nameWidth, 24, 9);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = own ? '#fff1b8' : '#fff';
+    ctx.fillText(player.name, nameX, nameY + 1, 139);
   }
 }

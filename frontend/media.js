@@ -5,6 +5,10 @@ export function sprite(category, name) {
   return sprites.get(`${category}/${name}.png`);
 }
 
+export const costume = name => sprites.get(`10_costumes/${name}.webp`) || sprite('01_characters', name);
+export const avatarUrl = name => costume(name)?.src || assetUrl('01_characters', name + '.png');
+export const scenery = name => sprites.get(`11_scenery/${name}.webp`);
+
 export async function readManifest() {
   const response = await fetch('/assets/asset_manifest.json');
   if (!response.ok) throw new Error(`Asset manifest HTTP ${response.status}`);
@@ -24,6 +28,23 @@ export async function loadImages(manifest) {
       }
       sprites.set(`${category}/${name}`, image);
     })));
+}
+
+export async function loadIllustrations(avatars) {
+  const images = {
+    '10_costumes': avatars,
+    '11_scenery': ['lantern_house', 'topiary', 'toadstool', 'blue_house', 'snow_pine', 'palm'],
+  };
+  await Promise.all(Object.entries(images).flatMap(([category, files]) => files.map(async name => {
+    const image = new Image();
+    image.src = assetUrl(category, name + '.webp');
+    try {
+      await image.decode();
+      sprites.set(`${category}/${name}.webp`, image);
+    } catch {
+      // Keep the original kit sprites available if an illustration fails to load.
+    }
+  })));
 }
 
 export class ArcadeAudio {

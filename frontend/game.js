@@ -1,5 +1,5 @@
 import { Arena, drawPreview } from './arena.js';
-import { ArcadeAudio, assetUrl, loadImages, readManifest } from './media.js';
+import { ArcadeAudio, assetUrl, avatarUrl, loadIllustrations, loadImages, readManifest } from './media.js';
 
 const $ = id => document.getElementById(id);
 const names = {
@@ -76,7 +76,7 @@ function node(tag, text, className) {
 
 function image(category, name, alt = '') {
   const img = new Image();
-  img.src = assetUrl(category, name + '.png');
+  img.src = category === '01_characters' ? avatarUrl(name) : assetUrl(category, name + '.png');
   img.alt = alt;
   return img;
 }
@@ -90,7 +90,7 @@ function profile() {
 function chooseAvatar(avatar) {
   state.avatar = avatar;
   save('bb_avatar', avatar);
-  $('selectedAvatar').src = assetUrl('01_characters', avatar + '.png');
+  $('selectedAvatar').src = avatarUrl(avatar);
   $('selectedAvatarName').textContent = names[avatar];
   for (const button of $('avatarPicker').children) {
     button.classList.toggle('selected', button.dataset.avatar === avatar);
@@ -503,7 +503,8 @@ function updateMatchLayout() {
 function updateCameraButton() {
   $('zoomMap').setAttribute('aria-pressed', String(state.overview));
   $('zoomMap').setAttribute('aria-label', state.overview ? 'Bật camera theo nhân vật' : 'Xem toàn bản đồ');
-  $('cameraLabel').textContent = state.overview ? 'Theo nhân vật' : 'Toàn bản đồ';
+  $('cameraLabel').textContent = state.overview ? 'Toàn bản đồ' : 'Theo nhân vật';
+  $('zoomMap').title = state.overview ? 'Chuyển sang theo nhân vật' : 'Chuyển sang toàn bản đồ';
 }
 
 function bind() {
@@ -687,7 +688,7 @@ async function boot() {
       fetch('/api/assets').then(response => response.json()),
     ]);
     audio.prepare(manifest.categories['08_audio']);
-    await loadImages(manifest);
+    await Promise.all([loadImages(manifest), loadIllustrations(catalog.avatars)]);
     maps = catalog.maps;
     for (const avatar of catalog.avatars) {
       const button = node('button', undefined, 'avatar-choice');

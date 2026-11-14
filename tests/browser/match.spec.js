@@ -198,6 +198,41 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await expect(page.locator('#joystick')).toBeInViewport({ ratio: 1 });
 });
 
+test('phone camera enlarges the kit-inspired costumes and can return to the full board', async ({ page }, info) => {
+  test.skip(info.project.name !== 'iphone-webkit', 'Measures arena composition on the phone viewport.');
+  await page.addInitScript(() => {
+    const original = CanvasRenderingContext2D.prototype.drawImage;
+    CanvasRenderingContext2D.prototype.drawImage = function (...args) {
+      if (this.canvas.id === 'gameCanvas' && args[0].src?.includes('/10_costumes/')) {
+        const transform = this.getTransform();
+        this.canvas.dataset.costume = new URL(args[0].src).pathname;
+        this.canvas.dataset.costumeScale = String(Math.hypot(transform.a, transform.b));
+      }
+      return original.apply(this, args);
+    };
+  });
+  await page.goto('/');
+  const fox = page.getByRole('button', { name: 'Cáo Cam', exact: true });
+  await fox.tap();
+  await expect(page.locator('#avatarPicker img[src*="/10_costumes/"]')).toHaveCount(8);
+  await expect(page.locator('#selectedAvatar')).toHaveAttribute('src', /10_costumes\/fox_scout.webp/);
+  await page.getByRole('button', { name: 'Tập chơi' }).tap();
+  await page.getByRole('button', { name: 'Bắt đầu' }).tap();
+  await expect(page.getByRole('button', { name: 'Đặt bóng nước' })).toBeEnabled();
+  const canvas = page.locator('#gameCanvas');
+  await expect(canvas).toHaveAttribute('data-costume', '/assets/10_costumes/fox_scout.webp');
+  const originalScale = Number(await canvas.getAttribute('data-costume-scale'));
+  expect(originalScale).toBeGreaterThan(0);
+  await expect(page.locator('#cameraLabel')).toHaveText('Toàn bản đồ');
+  await page.getByRole('button', { name: 'Bật camera theo nhân vật' }).tap();
+  await expect(page.locator('#cameraLabel')).toHaveText('Theo nhân vật');
+  await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeGreaterThan(originalScale * 1.45);
+  await expect(canvas).toBeInViewport({ ratio: .99 });
+  if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-follow.png` });
+  await page.getByRole('button', { name: 'Xem toàn bản đồ' }).tap();
+  await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeCloseTo(originalScale);
+});
+
 test('touch movement and balloon placement can run together', async ({ page, context }, info) => {
   test.skip(info.project.name !== 'android-chromium', 'Uses native Chromium multitouch input.');
   const record = monitor(page);
