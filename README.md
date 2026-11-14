@@ -1,46 +1,70 @@
-# Bong Bong Party 🎈
+# Bong Bong Party
 
-An **original** browser water-bomb party game, inspired by the *genre* of mid-2000s arcade games. No VNG/Nexon artwork, characters, logos, sounds or source code are included.
+Independent, free-to-play multiplayer water-balloon browser arcade, inspired by the feel of Vietnam's 2007 internet-café era. **Not affiliated with VNG, Nexon, or Boom Online.** The included art and audio come from the original *Bubble Arena 2007 Design Reference Kit* supplied for this project; no proprietary Boom Online client assets are included.
+
+## Play
+
+1. Open the app, choose one of the eight animated pixel characters, and enter a nickname.
+2. Choose **Chơi nhanh** to find a public room, **Tạo phòng** for a private room, or enter a shared six-character room code.
+3. Players can mark ready; the host selects one of eight maps and teams or free-for-all, then starts a round.
+4. Use **WASD / arrow keys** to move, **Space** to place a water balloon, **R** to throw when holding a glove, and **E** to detonate remote balloons. On mobile use the dedicated D-pad and balloon/action buttons.
+5. Explosions travel in four grid directions; solid walls block them and crates are destroyed. Pickups can increase speed, range and capacity or unlock kicking, throwing, remote detonation, shields and temporary invulnerability. Trapped teammates are rescued by touch; opponents can eliminate them.
+6. The server declares the winner. The host can choose rematch, or people can return to the public lobby.
 
 ## Features
-- Real-time multiplayer via server-authoritative FastAPI WebSockets: 2–8 people per room; solo sandbox for testing.
-- Shareable six-character **private rooms** (hidden from the public room list), public quick-match rooms, teams or free-for-all, chat and replay.
-- Classic grid movement, bomb timers, chain reactions, blocked blasts, breakable crates, upgrades, temporary water traps, teammate rescue, rival elimination, scoring and rounds.
-- Original Canvas-rendered, pastel cartoon characters and arenas; synthesized sound effects and optional original chiptune-style music. **No third-party assets or external audio downloads**.
-- Keyboard and touch controls; responsive desktop and mobile layouts. Mobile view follows your character with a tactical minimap; tap the map icon to view the whole arena.
-- No login. Anonymous random 128-bit guest ID stored in a one-year, HttpOnly, SameSite cookie. Nickname and sound preferences live in browser local storage. **IP addresses and browser fingerprinting are not used to identify people**.
-- One-origin deployment with QPyServe 0.6.0 and Render; health check at `/api/health`.
 
-## Local setup
+- **Real multiplayer:** authoritative FastAPI/WebSockets server with up to eight players, predictable 30 Hz simulation, ~12 Hz state broadcast, room codes, lobby/ready states, host controls, team or free-for-all results and chat.
+- **Anonymous identity:** random guest cookie with an independently HMAC-signed, HttpOnly reconnect token. Nickname/avatar and audio settings stored on the browser; no IP address or browser fingerprinting as identity.
+- **Reconnection:** 38-second disconnect grace, replacement socket for an already-known guest, 38-second slot retention, no state-changing trust of client-supplied coordinates or wins. Messages are size- and rate-limited, movement is validated and server cooldowns apply.
+- **Visuals:** kit-based pixel sprites and real original UI button assets, 8 maps using all 8 floor tiles and 10 obstacle assets, animated 4-frame balloons and 6-frame water-burst effects, fullscreen Canvas board with mobile following camera.
+- **Audio:** all 11 WAV files used, original lobby-loop music, event-driven sound effects, separate music/SFX volume and mute switches; playback starts only after user interaction.
+- **Renderer:** no client-side framework dependency, Canvas2D with nearest-neighbor sprites and `requestAnimationFrame` (target 60 FPS). Pixel rendering does not affect server tile collision rules.
+
+## Technical layout
+
+```text
+main.py                     FastAPI QPyServe game logic, validation, WebSocket server
+frontend/index.html         PC-style lobby, room and game UI
+frontend/style.css          Desktop / iPhone-first responsive styling
+frontend/game.js            Canvas renderer, sprite registry, lobby, input, audio
+frontend/assets/            ALL 60 supplied individually usable PNG/WAV files
+frontend/assets/asset_manifest.json   Asset registry source
+reference/                  5 design reference boards + 2 preview sheets (not game textures)
+docs/ASSET_KIT_README.md    Original reference kit README
+reference/ASSET_AUDIT.md    Inventory and normalization notes
+render.yaml                 Render blueprint configuration
+tests/                      Server, transport and sprite-asset tests
+```
+
+## Run locally
+
+Python 3.12+:
 
 ```bash
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-Then open http://localhost:10000. Open another browser profile to test multiplayer (each profile gets its own guest cookie). Run `python -m pip install pytest httpx && pytest -q` for server tests. `python main.py --prod` runs the production, single-port build.
+Open http://127.0.0.1:10000. On Render, the command is `python main.py --prod` and port is the `PORT` environment variable. QPyServe serves frontend and backend from the same origin and supports WebSocket routes. **Single worker and single instance** are intentional: room state is held in process memory.
 
-## Deploy on Render
+Tests:
 
-1. Create a **new** repository for this folder, separate from any other project, and push the files.
-2. On Render, deploy a **Python web service** from that repository (or use `render.yaml` as a Blueprint). Python 3.12, build `pip install -r requirements.txt`, start `python main.py --prod`, health `/api/health`. Use one worker/instance.
-3. Share the `https://<service>.onrender.com` address. A friend can join using the lobby or a room link.
+```bash
+python -m pip install pytest httpx
+python -m pytest -q
+node --check frontend/game.js
+```
 
-### Deployment limitations
+## Hosting constraints
 
-Free Render web services sleep after idle periods and have **ephemeral** storage. Room state, match scores and names on the server are intentionally in memory; they reset on restart/redeploy or spin-down. Browser cookies remain, so the same browser can be recognized on next visit. Active WebSockets generally keep the service awake while traffic is flowing, but you should not expect uninterrupted 24/7 access or permanent matchmaking on free hosting.
+The `render.yaml` is configured for free-tier testing on Render (Ohio region). Free instances can sleep and restart; rooms and scores are **volatile** and reset on instance restart. Reconnection only works while a room survives on the same server process. Stable identity across Render process restarts requires `BB_AUTH_SECRET` (a secure secret you configure in Render), plus a persistent player store if you need historical scores/nicknames in the cloud. A browser local ID is kept within its own browser profile and is lost if cookies are deleted.
 
-This design supports a **single Python worker**. Multiple instances need Redis/pub-sub or equivalent for cross-instance rooms, plus an external database for persistent profiles/scores. For a serious public release, add anti-abuse moderation, observability, accessible settings and load tests.
+For production-scale competitive play, add PostgreSQL or Redis for room state and presence, multi-instance routing, telemetry, abuse reporting, matchmaking fairness, anti-lag measurements and load tests. The default implementation is suitable for a small friend group on one service, not a large esports-scale release.
 
-## Websocket protocol
+## Historical reference and rights
 
-1. `GET /api/session` issues a random HttpOnly cookie.
-2. `POST /api/rooms?private=true` creates a private room, `POST /api/rooms` creates a public room, and `GET /api/rooms` lists public rooms with players.
-3. Connect `/ws/{room_id}?name=...`; receive `{type:"welcome",id,room}` and periodic `{type:"state",...}` snapshots.
-4. Send `{type:"input",dx,dy}`, `{type:"bomb"}`, `{type:"start"}`, `{type:"mode",value:"teams"|"solo"}`, `{type:"name",value}`, or `{type:"chat",value}`.
+2007 version and remote controls: https://thanhnien.vn/boom-online-ra-mat-phien-ban-moi-nhat-103-185191079.htm
 
-The server owns positions, collisions, bombs, explosion propagation, powerups, traps, eliminations and scoring. Clients send *intent*, not trusted game state. WebSocket origin is checked against Host; names/chat are sanitized and rendered as text, not HTML. The app does not use behavioral device fingerprinting or silent cross-site tracking.
+2007 launch and gameplay overview: https://dantri.com.vn/cong-nghe/boom-online-gia-nhap-lang-game-viet-nam-1174700775.htm
 
-## Attribution
-
-Bong Bong Party is independent, unaffiliated with the publishers of Boom Online / Crazy Arcade. Genre gameplay inspiration does not confer rights to copy any game artwork or audio.
+The historical reference screens included in the supplied kit are targets for proportions and atmosphere, not redistributable game assets. This is an independent arcade game with original provided art/music, not a verified pixel-perfect reproduction of an unauthorized client.

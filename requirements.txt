@@ -1,3 +1,3 @@
-qpyserve==0.6.0
+qpyserve>=0.7.1,<0.8
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1

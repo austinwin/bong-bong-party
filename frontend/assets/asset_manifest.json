@@ -1,0 +1,129 @@
+{
+  "title": "Bubble Arena: 2007 Water-Balloon Arcade Reference Kit",
+  "about": "Original generated reference / placeholder assets inspired by early-2000s water-balloon arena games; not a dump of Boom Online assets.",
+  "character_resolution": [
+    64,
+    64
+  ],
+  "floor_tile_resolution": [
+    64,
+    64
+  ],
+  "categories": {
+    "00_reference_boards": [
+      "character_concept_sheet.png",
+      "characters_and_costumes.png",
+      "full_2007_inspired_asset_reference.png",
+      "lobby_and_game_hud.png",
+      "tiles_powerups_and_blasts.png"
+    ],
+    "01_characters": [
+      "berry_pixie.png",
+      "cloud_tech.png",
+      "duckling.png",
+      "fox_scout.png",
+      "frog_kid.png",
+      "little_bat.png",
+      "night_wizard.png",
+      "turtle_scholar.png"
+    ],
+    "02_floor_tiles": [
+      "cobble.png",
+      "grass.png",
+      "ice.png",
+      "pink.png",
+      "sand.png",
+      "stone.png",
+      "water.png",
+      "wood.png"
+    ],
+    "03_obstacles": [
+      "barrel.png",
+      "brick_block.png",
+      "bush.png",
+      "candy_block.png",
+      "gold_block.png",
+      "ice_crate.png",
+      "mushroom.png",
+      "snowman.png",
+      "stone_pillar.png",
+      "wood_crate.png"
+    ],
+    "04_powerups": [
+      "extra_balloon.png",
+      "glove.png",
+      "kick.png",
+      "remote.png",
+      "shield.png",
+      "skates.png",
+      "speed.png",
+      "star.png",
+      "water_range.png"
+    ],
+    "05_water_balloons": [
+      "balloon_00.png",
+      "balloon_01.png",
+      "balloon_02.png",
+      "balloon_03.png"
+    ],
+    "06_water_blasts": [
+      "water_burst_00.png",
+      "water_burst_01.png",
+      "water_burst_02.png",
+      "water_burst_03.png",
+      "water_burst_04.png",
+      "water_burst_05.png"
+    ],
+    "07_ui": [
+      "cancel_button.png",
+      "join_button.png",
+      "ready_button.png",
+      "start_button.png"
+    ],
+    "08_audio": [
+      "balloon_inflate.wav",
+      "balloon_place.wav",
+      "countdown_tick.wav",
+      "defeat_jingle.wav",
+      "original_retro_lobby_loop.wav",
+      "pickup.wav",
+      "rescue_teammate.wav",
+      "speed_boost.wav",
+      "trapped_in_bubble.wav",
+      "victory_jingle.wav",
+      "water_burst.wav"
+    ],
+    "09_previews": [
+      "example_gameplay.png",
+      "sprite_index.png"
+    ]
+  },
+  "suggested_animation_ms": {
+    "balloon_pulse": [
+      180,
+      180,
+      150,
+      150
+    ],
+    "water_burst": [
+      70,
+      70,
+      85,
+      95,
+      85,
+      85
+    ]
+  },
+  "recommended_controls": {
+    "desktop": "WASD/arrows + Space to place balloon",
+    "mobile": "large bottom-left thumb control + bottom-right balloon button"
+  },
+  "gameplay_invariants": [
+    "grid-based 4-way movement",
+    "placed water balloons burst horizontally and vertically",
+    "solid obstacles block water blast",
+    "destructible blocks disappear after explosion",
+    "temporary bubble capture and teammate rescue"
+  ],
+  "license_notice": "These generated assets are original design prototypes. Boom Online / Crazy Arcade names, characters, original game screenshots, logos and audio belong to their respective rights holders."
+}
