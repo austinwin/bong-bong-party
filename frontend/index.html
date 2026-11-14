@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#77dcf3" />
+  <meta name="description" content="Bong Bong Party — trò chơi bong bóng nước dễ thương, chơi cùng bạn bè trên trình duyệt." />
+  <title>Bong Bong Party · Chơi cùng bạn bè</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div class="sky-decoration" aria-hidden="true"><span class="float-bubble a"></span><span class="float-bubble b"></span><span class="float-bubble c"></span><span class="float-bubble d"></span></div>
+  <div id="app">
+    <header class="site-header">
+      <button class="logo" id="logo" aria-label="Về trang chủ"><span class="logo-drop">●</span><span>BONG<span class="accent">BONG!</span><small>PARTY</small></span></button>
+      <div class="head-right">
+        <span class="server-status" id="serverStatus"><i></i><span>Đang kết nối</span></span>
+        <button class="pill icon-btn" id="musicToggle" title="Bật/tắt nhạc nền" aria-label="Bật/tắt nhạc nền">♫</button>
+        <button class="pill icon-btn" id="soundToggle" title="Bật/tắt âm thanh" aria-label="Bật/tắt âm thanh">◖))</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="homeScreen" class="home-layout">
+        <div class="hero-card">
+          <div class="hero-text"><span class="label-spark">✦ CHÀO MỪNG ĐẾN XỨ SỞ BONG BÓNG ✦</span>
+            <h1>Đặt bom nước.<br /><em>Cười thật đã!</em></h1>
+            <p>Những trận chiến bong bóng tí hon, bạn bè thân quen, và niềm vui tuổi thơ. Chỉ cần mở trình duyệt là chơi ngay!</p>
+          </div>
+          <div class="showcase">
+            <div class="floating-sticker sun">☀</div><div class="floating-sticker heart">♥</div>
+            <canvas id="heroCanvas" width="660" height="440" aria-label="Những nhân vật thú bông dễ thương đang chơi bom nước"></canvas>
+            <div class="speech-sticker">Ú òa! <span>💦</span></div>
+          </div>
+          <div class="feature-chips"><span>🎈 Bong bóng nước</span><span>👫 2–8 bạn bè</span><span>⚡ Chơi tức thì</span></div>
+        </div>
+
+        <aside class="lobby-panel">
+          <div class="panel-top"><span class="panel-icon">🎮</span><div><span class="eyebrow">SẴN SÀNG CHƯA?</span><h2>Vào chơi nào!</h2></div></div>
+          <label class="field-label" for="nickname">Tên của bạn</label>
+          <div class="nickname-wrap"><span>🌟</span><input id="nickname" type="text" maxlength="16" autocomplete="nickname" placeholder="Tên dễ thương của bạn" /></div>
+          <button class="primary-button" id="quickPlay"><span>⚡</span> CHƠI NHANH <span class="chevron">›</span></button>
+          <button class="secondary-button" id="createRoom"><span>🏡</span> TẠO PHÒNG RIÊNG</button>
+          <div class="or-line"><span>hoặc chơi với bạn bè</span></div>
+          <form id="joinForm" class="join-row"><input id="roomCode" aria-label="Mã phòng" type="text" inputmode="text" maxlength="6" autocapitalize="characters" placeholder="MÃ PHÒNG" /><button type="submit">VÀO <span>→</span></button></form>
+          <button class="practice-link" id="practice">✿ Chơi thử một mình trước</button>
+          <div class="room-section"><div class="room-heading"><strong>Phòng đang mở</strong><button id="refreshRooms" aria-label="Làm mới danh sách phòng">⟳</button></div><div id="roomList" class="room-list"><div class="empty-rooms">Những cuộc vui mới đang đợi bạn ✨</div></div></div>
+        </aside>
+        <p class="copyright-note">Một thế giới bong bóng mới lấy cảm hứng từ trò chơi arcade tuổi thơ. Nhân vật, hình ảnh và giai điệu được tạo riêng cho Bong Bong Party.</p>
+      </section>
+
+      <section id="gameScreen" class="game-layout" hidden>
+        <div class="play-area">
+          <div class="gamebar"><button class="back-button" id="leaveRoom">‹ <span>Thoát</span></button><div class="gamebar-center"><span class="room-label">PHÒNG <strong id="currentRoom">------</strong></span><span class="round-timer" id="timer">02:30</span></div><button class="share-button" id="shareRoom">🔗 <span>Mời bạn</span></button></div>
+          <div class="board-container">
+            <canvas id="gameCanvas" width="900" height="780" aria-label="Bản đồ đấu bom nước"></canvas><button class="zoom-button" id="zoomMap" aria-label="Đổi chế độ thu phóng bản đồ" title="Xem toàn bản đồ">◱</button>
+            <div id="boardOverlay" class="board-overlay"><div class="waiting-card"><div class="waiting-illustration">🫧</div><h2 id="overlayTitle">Chào mừng đến phòng!</h2><p id="overlayDesc">Chờ bạn bè vào cùng để bắt đầu nhé.</p><div id="overlayPlayers" class="overlay-players"></div><div id="modeButtons" class="mode-row"><button class="mode-option active" data-mode="teams">🤝 Đồng đội</button><button class="mode-option" data-mode="solo">🎯 Tự do</button></div><button class="primary-button start-button" id="startGame">▶ BẮT ĐẦU CHƠI</button><div class="waiting-note" id="waitingNote">Chủ phòng có thể bắt đầu bất cứ lúc nào</div></div></div>
+            <div id="toast" class="game-toast" hidden></div>
+          </div>
+          <div class="mobile-controls" id="mobileControls"><div class="dpad"><button data-dir="up" class="up" aria-label="Lên">▲</button><button data-dir="left" class="left" aria-label="Trái">◀</button><button data-dir="down" class="down" aria-label="Xuống">▼</button><button data-dir="right" class="right" aria-label="Phải">▶</button><div class="dpad-dot"></div></div><button id="mobileBomb" class="mobile-bomb" aria-label="Đặt bom"><span>💧</span><small>BOM</small></button></div>
+          <div class="keyboard-hint">Di chuyển <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> hoặc <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> · Đặt bom <kbd>SPACE</kbd> · Cứu đồng đội bằng cách chạm vào bóng</div>
+        </div>
+        <aside class="game-sidebar"><div class="sidebar-card"><div class="sidebar-heading"><span>🏆</span><h3>Người chơi</h3><span id="playerCounter">0/8</span></div><div id="roster" class="roster"></div></div><div class="sidebar-card chat-card"><div class="sidebar-heading"><span>💌</span><h3>Góc trò chuyện</h3></div><div id="chatMessages" class="chat-messages"><div class="chat-system">Gửi lời chào cho bạn bè nhé!</div></div><form id="chatForm" class="chat-form"><input id="chatInput" maxlength="90" placeholder="Nói gì đó dễ thương..." aria-label="Tin nhắn" /><button type="submit" aria-label="Gửi tin nhắn">➤</button></form></div><div class="tip-card"><span>💡</span><div><b>Mẹo nhỏ</b><p>Đặt bom rồi chạy thật nhanh! Nhặt kẹo để tăng tốc, sức nước và số bom.</p></div></div></aside>
+      </section>
+    </main>
+    <footer>© 2026 Bong Bong Party · Chơi vui, chơi đẹp ♡</footer>
+  </div>
+  <script type="module" src="/game.js"></script>
+</body>
+</html>
