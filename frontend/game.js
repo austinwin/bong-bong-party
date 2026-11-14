@@ -18,8 +18,8 @@ const effects = {
   bomb: ['place', 'balloon_place'], inflate: ['balloon_inflate'],
   splash: ['splash', 'water_burst'], trap: ['bubble', 'trapped_in_bubble'],
   rescue: ['rescue', 'rescue_teammate'], pickup: ['prize', 'pickup'],
-  speed_boost: ['speed_boost'], shield: ['prize', 'pickup'], kick: ['throw', 'balloon_place'], out: ['pop'],
-  cheer: ['go', 'pickup'],
+  speed_boost: ['speed_boost'], shield: ['prize', 'pickup'], kick: ['kick', 'throw'], out: ['pop'],
+  cheer: ['cheer', 'pickup'],
 };
 const connectionErrors = {
   4000: 'Phòng đang mở ở một thẻ khác.',
@@ -38,7 +38,7 @@ const initialAvatar = stored('bb_avatar', 'frog_kid');
 const state = {
   avatar: names[initialAvatar] ? initialAvatar : 'frog_kid', nick: stored('bb_nick', ''),
   room: '', id: '', socket: null, world: null, retries: 0, lastEvent: 0, seq: 0,
-  keys: new Set(), stick: null, overview: stored('bb_camera', 'off') === 'off',
+  keys: new Set(), stick: null, overview: savedOverview(),
   haptics: stored('bb_haptics', 'on') === 'on',
   pending: false, ready: false, chatIds: new Set(), cheerUntil: 0,
 };
@@ -54,6 +54,15 @@ const audio = new ArcadeAudio(preferences, showAudioStatus);
 const compactMatch = matchMedia('(max-width: 700px), (pointer: coarse) and (max-height: 540px)');
 const arena = new Arena($('gameCanvas'));
 let maps = {};
+
+function savedOverview() {
+  const value = stored('bb_camera', null);
+  return value === null ? null : value === 'off';
+}
+
+function showOverview() {
+  return state.overview ?? !compactMatch.matches;
+}
 
 function status(text, connected = false) {
   $('serverStatus').textContent = text;
@@ -276,7 +285,7 @@ function receive(world) {
   if (world.countdown && world.countdown !== previous?.countdown) audio.play('countdown_tick');
   if (previous?.countdown && !world.countdown && world.state === 'playing') audio.play('go', { gain: .8 });
   if (!first && world.state === 'finished' && previous?.state !== 'finished') {
-    audio.play(winner(localPlayer(), world) ? 'victory_jingle' : 'defeat_jingle');
+    audio.result(winner(localPlayer(), world));
   }
   const active = world.state === 'playing';
   audio.scene(active, active && world.time <= 30);
@@ -340,10 +349,14 @@ function handleEvent(event) {
   }
   arena.react(event);
   const self = event.who === state.id;
-  const [sound, fallback] = event.thrown ? effects.kick : effects[event.type] || [];
+  const [sound, fallback] = event.thrown ? ['throw', 'balloon_place'] : effects[event.type] || [];
   const recentPreview = state.previewAction && performance.now() - state.previewAction.time < 650;
   if (sound && !(self && ((event.type === 'bomb' && recentPreview) || event.type === 'cheer'))) {
-    audio.play(sound, { fallback, gap: .067, gain: self || event.type === 'splash' ? 1 : .48 });
+    const me = localPlayer();
+    const distance = me?.alive && Number.isFinite(event.x) && Number.isFinite(event.y)
+      ? Math.hypot(me.x - event.x, me.y - event.y) : 2.5;
+    const gain = self ? 1 : Math.max(.33, 1 - distance * .105);
+    audio.play(sound, { fallback, gap: .067, gain });
   }
   if (self && event.type === 'bomb') state.previewAction = null;
   if (self && ['pickup', 'rescue', 'trap', 'shield'].includes(event.type)) {
@@ -536,14 +549,16 @@ function updateMatchLayout() {
   if ($('audioSettings').parentNode !== parent) parent.prepend($('audioSettings'));
   const shareParent = compact ? $('detailsActions') : document.querySelector('.match-actions');
   if ($('shareRoom').parentNode !== shareParent) shareParent.prepend($('shareRoom'));
+  updateCameraButton();
   toggleMatchDetails(false);
 }
 
 function updateCameraButton() {
-  $('zoomMap').setAttribute('aria-pressed', String(state.overview));
-  $('zoomMap').setAttribute('aria-label', state.overview ? 'Bật camera theo nhân vật' : 'Xem toàn bản đồ');
-  $('cameraLabel').textContent = state.overview ? 'Toàn bản đồ' : 'Theo nhân vật';
-  $('zoomMap').title = state.overview ? 'Chuyển sang theo nhân vật' : 'Chuyển sang toàn bản đồ';
+  const overview = showOverview();
+  $('zoomMap').setAttribute('aria-pressed', String(overview));
+  $('zoomMap').setAttribute('aria-label', overview ? 'Bật camera theo nhân vật' : 'Xem toàn bản đồ');
+  $('cameraLabel').textContent = overview ? 'Toàn bản đồ' : 'Theo nhân vật';
+  $('zoomMap').title = overview ? 'Chuyển sang theo nhân vật' : 'Chuyển sang toàn bản đồ';
 }
 
 function bind() {
@@ -616,7 +631,7 @@ function bind() {
     };
   }
   $('zoomMap').onclick = () => {
-    state.overview = !state.overview;
+    state.overview = !showOverview();
     save('bb_camera', state.overview ? 'off' : 'on');
     updateCameraButton();
   };
@@ -626,7 +641,7 @@ function bind() {
     state.cheerUntil = performance.now() + 2050;
     $('cheer').disabled = true;
     arena.cue('cheer');
-    audio.play('go', { gain: .52, rate: 1.18 });
+    audio.play('cheer', { gain: .74, fallback: 'go' });
   };
   updateCameraButton();
   $('matchDetails').onclick = () => {
@@ -780,8 +795,8 @@ async function boot() {
     const requestedRoom = new URLSearchParams(location.search).get('room');
     if (requestedRoom) enter(requestedRoom);
     function frame(time) {
-      arena.render(time, state.overview);
-      if (arena.takeFootstep()) audio.play('step', { gain: .34, gap: .125 });
+      arena.render(time, showOverview(), compactMatch.matches);
+      if (arena.takeFootstep()) audio.play('step', { gain: .26, gap: .18, rate: .94 + Math.random() * .13 });
       requestAnimationFrame(frame);
     }
     requestAnimationFrame(frame);

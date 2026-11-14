@@ -251,12 +251,14 @@ def test_arcade_audio_catalog_serves_composed_loops_and_feedback():
     with TestClient(app) as client:
         names = client.get('/api/assets').json()['arcadeAudio']
         assert set(names) == {file.stem for file in (KIT / '13_audio').glob('*.wav')}
-        assert len(names) == 11
+        assert len(names) == 15
         for name in names:
             response = client.get(f'/assets/13_audio/{name}.wav')
             assert response.status_code == 200
             assert response.headers['content-type'] == 'audio/wav'
             with wave.open(BytesIO(response.content), 'rb') as clip:
                 duration = clip.getnframes() / clip.getframerate()
-                assert (duration > 20) == (name in {'lobby_parade', 'balloon_rally'})
+                assert (duration > 20) == (name in {'breezy_plaza', 'splash_rally'})
+                if name in {'win', 'loss'}:
+                    assert 1.4 < duration < 1.5
         assert client.get('/assets/13_audio/other.wav').status_code == 404

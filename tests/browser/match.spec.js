@@ -56,9 +56,9 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await page.locator('#nickname').fill('Ếch QA');
     await page.locator('#nickname').blur();
     await press(page.getByRole('button', { name: 'Ếch Xanh', exact: true }));
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(22);
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 33 && clip.state === 'running'))).toBeTruthy();
-    expect(first.downloads.size).toBe(22);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(26);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 34 && clip.state === 'running'))).toBeTruthy();
+    expect(first.downloads.size).toBe(26);
     await expect(page.getByRole('button', { name: 'Tạo phòng' })).toBeInViewport();
     if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/${info.project.name}-lobby.png` });
 
@@ -88,7 +88,7 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
 
     await press(page.getByRole('button', { name: 'Bắt đầu' }));
     await expect(page.locator('#gameCanvas')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 26 && clip.seconds < 28))).toBeTruthy();
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 28 && clip.seconds < 29))).toBeTruthy();
     await expect.poll(() => first.state().countdown).toBeGreaterThan(0);
     await page.keyboard.press('Space');
     await expect.poll(() => first.state().countdown).toBe(0);
@@ -135,7 +135,7 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await expect(page.locator('#overlayTitle')).toHaveText('Kết thúc trận', { timeout: 10000 });
     await expect(peer.locator('#overlayTitle')).toHaveText('Chiến thắng!');
     await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.map(clip => Math.round(clip.seconds * 100)))).toEqual(
-      expect.arrayContaining([10, 19, 24, 34, 35, 42, 98])
+      expect.arrayContaining([10, 19, 24, 34, 35, 42, 48, 145])
     );
     await expect(page.getByRole('button', { name: 'Chơi lại' })).toBeDisabled();
     await press(peer.getByRole('button', { name: 'Sẵn sàng', exact: true }));
@@ -204,7 +204,7 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await expect(page.locator('#joystick')).toBeInViewport({ ratio: 1 });
 });
 
-test('phone camera enlarges the kit-inspired costumes and can return to the full board', async ({ page }, info) => {
+test('the phone starts closer to the costume, eases out to the full board and remembers the view', async ({ page }, info) => {
   test.skip(info.project.name !== 'iphone-webkit', 'Measures arena composition on the phone viewport.');
   await page.addInitScript(() => {
     const original = CanvasRenderingContext2D.prototype.drawImage;
@@ -213,6 +213,8 @@ test('phone camera enlarges the kit-inspired costumes and can return to the full
         const transform = this.getTransform();
         this.canvas.dataset.costume = new URL(args[0].src).pathname;
         this.canvas.dataset.costumeScale = String(Math.hypot(transform.a, transform.b));
+        this.canvas.dataset.costumeHeight = String(args[4] * Math.hypot(transform.c, transform.d) / (this.canvas.width / this.canvas.clientWidth));
+        (window.cameraScales ??= []).push(Math.hypot(transform.a, transform.b));
       }
       return original.apply(this, args);
     };
@@ -227,16 +229,19 @@ test('phone camera enlarges the kit-inspired costumes and can return to the full
   await expect(page.getByRole('button', { name: 'Đặt bóng nước' })).toBeEnabled();
   const canvas = page.locator('#gameCanvas');
   await expect(canvas).toHaveAttribute('data-costume', '/assets/10_costumes/fox_scout.webp');
-  const originalScale = Number(await canvas.getAttribute('data-costume-scale'));
-  expect(originalScale).toBeGreaterThan(0);
-  await expect(page.locator('#cameraLabel')).toHaveText('Toàn bản đồ');
-  await page.getByRole('button', { name: 'Bật camera theo nhân vật' }).tap();
   await expect(page.locator('#cameraLabel')).toHaveText('Theo nhân vật');
-  await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeGreaterThan(originalScale * 1.45);
+  const closeScale = Number(await canvas.getAttribute('data-costume-scale'));
+  expect(Number(await canvas.getAttribute('data-costume-height'))).toBeGreaterThan(68);
   await expect(canvas).toBeInViewport({ ratio: .99 });
   if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-follow.png` });
   await page.getByRole('button', { name: 'Xem toàn bản đồ' }).tap();
-  await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeCloseTo(originalScale);
+  await expect(page.locator('#cameraLabel')).toHaveText('Toàn bản đồ');
+  await expect.poll(async () => Number(await canvas.getAttribute('data-costume-scale'))).toBeLessThan(closeScale * .55);
+  const intermediateViews = await page.evaluate(initial => window.cameraScales.filter(scale => scale > initial * .63 && scale < initial * .94), closeScale);
+  expect(intermediateViews.length).toBeGreaterThan(2);
+  if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-overview.png` });
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Bật camera theo nhân vật' })).toBeVisible();
 });
 
 test('touch predicts movement during delayed snapshots and can plant a balloon with a second finger', async ({ page, context }, info) => {
@@ -268,6 +273,7 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
     CanvasRenderingContext2D.prototype.drawImage = function (...args) {
       if (this.canvas.id === 'gameCanvas' && /\/(10_costumes|12_motion)\//.test(args[0].src || '')) {
         const path = new URL(args[0].src).pathname;
+        if (window.costumeFrame?.path !== path) window.poseChanges = (window.poseChanges || 0) + 1;
         window.costumeFrame = { path, x: this.getTransform().e };
         (window.runFrames ??= new Set()).add(path);
       }
@@ -279,6 +285,9 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
   await page.getByRole('button', { name: 'Bắt đầu' }).tap();
   const bombButton = page.getByRole('button', { name: 'Đặt bóng nước' });
   await expect(bombButton).toBeEnabled();
+  await page.getByRole('button', { name: 'Xem toàn bản đồ' }).tap();
+  // Wait for the camera to settle before using a fixed screen-space movement baseline.
+  await expect.poll(() => page.evaluate(() => window.costumeFrame?.x)).toBeLessThan(120);
   const stick = page.locator('#joystick');
   await expect(stick).toBeInViewport();
   const bounds = await stick.boundingBox();
@@ -291,13 +300,20 @@ test('touch predicts movement during delayed snapshots and can plant a balloon w
   await expect(stick).toHaveClass(/grabbed/);
   await expect(stick).toHaveAttribute('data-active', '');
   await expect.poll(() => page.evaluate(() => window.costumeFrame?.path)).toMatch(/10_costumes/);
+  await expect.poll(() => page.evaluate(async () => {
+    const x = window.costumeFrame.x;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return Math.abs(window.costumeFrame.x - x);
+  })).toBeLessThan(.02);
   const x = await page.evaluate(() => window.costumeFrame.x);
+  await page.evaluate(() => { window.poseChanges = 0; });
   hold = true;
   await devtools.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [right] });
   await expect(stick).toHaveAttribute('data-active', 'right');
   await expect.poll(() => stick.evaluate(el => Number.parseFloat(el.style.getPropertyValue('--stick-x')))).toBeGreaterThan(10);
   await expect.poll(() => page.evaluate(() => window.costumeFrame.x)).toBeGreaterThan(x + 8);
   await expect.poll(() => page.evaluate(() => window.costumeFrame.path)).toMatch(/12_motion\/.*-side/);
+  expect(await page.evaluate(() => window.poseChanges)).toBeLessThan(4);
   expect(delivered.players[0].x).toBe(1.5);
   hold = false;
   if (held) relay.send(held);

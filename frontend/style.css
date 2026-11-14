@@ -180,6 +180,10 @@ img[src$=".webp"] { image-rendering: auto; }
 #gameCanvas { display: block; width: 100%; height: auto; aspect-ratio: 15 / 13; image-rendering: auto; touch-action: none; }
 #zoomMap { display: inline-flex; gap: 5px; align-items: center; justify-content: center; min-height: 36px; padding: 4px 8px; font-size: 11px; background: #1e3d75; }
 .map-icon { width: 12px; height: 10px; border: 1px solid #c4e6e6; border-radius: 2px; background: linear-gradient(90deg, transparent 29%, #c4e6e6 30% 38%, transparent 39% 63%, #c4e6e6 64% 72%, transparent 73%); }
+#zoomMap[aria-pressed="false"] .map-icon {
+  border-radius: 3px;
+  background: radial-gradient(circle, #ffdf8d 23%, transparent 30%), radial-gradient(circle, transparent 47%, #c4e6e6 54% 60%, transparent 65%);
+}
 
 .room-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(157px, 28%); gap: 12px; padding: 12px; }
 .room-players { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; gap: 6px; }

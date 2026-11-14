@@ -9,6 +9,8 @@ export const costume = name => sprites.get(`10_costumes/${name}.webp`) || sprite
 export const avatarUrl = name => costume(name)?.src || assetUrl('01_characters', name + '.png');
 export const scenery = name => sprites.get(`11_scenery/${name}.webp`);
 export const runCostume = (name, direction) => sprites.get(`12_motion/${name}-${direction}.webp`);
+const LOBBY_MUSIC = 'breezy_plaza';
+const MATCH_MUSIC = 'splash_rally';
 
 export async function readManifest() {
   const response = await fetch('/assets/asset_manifest.json');
@@ -54,7 +56,7 @@ export class ArcadeAudio {
     this.preferences = preferences;
     this.onStatus = onStatus;
     this.buffers = new Map();
-    this.musicName = 'lobby_parade';
+    this.musicName = LOBBY_MUSIC;
     this.lastSounds = new Map();
   }
 
@@ -67,7 +69,8 @@ export class ArcadeAudio {
     this.downloads = sources.map(async ([category, file]) => {
       const name = file.replace('.wav', '');
       if (this.buffers.has(name)) return null;
-      const response = await fetch(assetUrl(category, file));
+      const priority = [this.musicName, 'prize', 'pickup'].includes(name) ? 'auto' : 'low';
+      const response = await fetch(assetUrl(category, file), { priority });
       if (!response.ok) throw new Error(file);
       return [name, await response.arrayBuffer()];
     }).map(download => download.catch(() => null));
@@ -98,8 +101,15 @@ export class ArcadeAudio {
       this.lastSounds.clear();
       this.music = this.context.createGain();
       this.effects = this.context.createGain();
-      this.music.connect(this.context.destination);
-      this.effects.connect(this.context.destination);
+      this.duck = this.context.createGain();
+      const output = this.context.createDynamicsCompressor();
+      output.threshold.value = -7;
+      output.knee.value = 8;
+      output.ratio.value = 6;
+      this.music.connect(this.duck);
+      this.duck.connect(output);
+      this.effects.connect(output);
+      output.connect(this.context.destination);
       this.context.addEventListener('statechange', () => this.update());
       this.decode();
     }
@@ -113,12 +123,21 @@ export class ArcadeAudio {
   }
 
   scene(active = false, lastSeconds = false) {
-    const name = active ? 'balloon_rally' : 'lobby_parade';
-    const tempo = lastSeconds ? 1.1 : 1;
+    const name = active ? MATCH_MUSIC : LOBBY_MUSIC;
+    const tempo = lastSeconds ? 1.05 : 1;
     if (name === this.musicName && tempo === (this.tempo ?? 1)) return;
     this.musicName = name;
     this.tempo = tempo;
     this.update();
+  }
+
+  result(won) {
+    if (!this.play(won ? 'win' : 'loss', { fallback: won ? 'victory_jingle' : 'defeat_jingle' })) return;
+    const now = this.context.currentTime;
+    const gain = this.duck.gain;
+    gain.cancelScheduledValues(now);
+    gain.setTargetAtTime(.34, now, .04);
+    gain.setTargetAtTime(1, now + 1.16, .19);
   }
 
   get enabled() {
@@ -171,8 +190,9 @@ export class ArcadeAudio {
   update() {
     const { music, sfx, musicVolume, sfxVolume } = this.preferences;
     if (this.context) {
-      this.music.gain.value = music ? musicVolume * .78 : 0;
-      this.effects.gain.value = sfx ? sfxVolume : 0;
+      const now = this.context.currentTime;
+      this.music.gain.setTargetAtTime(music ? musicVolume * .83 : 0, now, .045);
+      this.effects.gain.setTargetAtTime(sfx ? sfxVolume : 0, now, .045);
     }
     const nextTrack = this.buffers.has(this.musicName) ? this.musicName : 'original_retro_lobby_loop';
     if ((!music || !musicVolume || this.track?.name !== nextTrack) && this.track) {

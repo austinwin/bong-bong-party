@@ -19,13 +19,15 @@ const STAGES = {
 };
 const BORDER_X = 24, BORDER_Y = 112;
 const SCENE_W = WIDTH + BORDER_X * 2, SCENE_H = HEIGHT + BORDER_Y * 2;
+const TAU = 2 * Math.PI;
+const STRIDE_LENGTH = 1.55;
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
 function followOffset(coordinate, view, extent) {
-  const margin = 5;
+  const margin = 10;
   if (view >= extent + 2 * margin) return (extent - view) / 2;
   return clamp(coordinate * TILE - view / 2, -margin, extent + margin - view);
 }
@@ -75,9 +77,20 @@ function drawObstacles(ctx, theme, world) {
       ctx.fillRect(left + 2, top + 2, TILE - 4, TILE - 4);
       ctx.globalAlpha = 1;
     }
+    obstacleShadow(ctx, left, top);
     draw(ctx, '03_obstacles', theme.solid, left + 1, top - 2, TILE - 2);
   }
-  for (const [x, y, type] of world.crates) draw(ctx, '03_obstacles', type, x * TILE, y * TILE - 3);
+  for (const [x, y, type] of world.crates) {
+    obstacleShadow(ctx, x * TILE, y * TILE);
+    draw(ctx, '03_obstacles', type, x * TILE, y * TILE - 3);
+  }
+}
+
+function obstacleShadow(ctx, left, top) {
+  ctx.fillStyle = '#172b3925';
+  ctx.beginPath();
+  ctx.ellipse(left + 34, top + 54, 24, 8, 0, 0, TAU);
+  ctx.fill();
 }
 
 function drawScenicBoard(ctx, theme, world) {
@@ -139,6 +152,7 @@ export class Arena {
     this.poses = new Map();
     this.particles = [];
     this.steps = 0;
+    this.frameTime = null;
     this.reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     this.observer = new ResizeObserver(([entry]) => {
       this.viewport = { width: entry.contentRect.width, height: entry.contentRect.height };
@@ -156,10 +170,12 @@ export class Arena {
     this.poses.clear();
     this.particles = [];
     this.steps = 0;
+    this.frameTime = null;
   }
 
   receive(world, theme, localId) {
     const time = performance.now();
+    const previousCrates = this.world?.crates;
     this.interval = Math.max(35, Math.min(100, time - (this.received || time - 67)));
     this.received = time;
     this.localId = localId;
@@ -177,13 +193,22 @@ export class Arena {
     for (const player of world.players) {
       const previous = this.positions.get(player.id);
       this.positions.set(player.id, { from: previous?.drawn || player, drawn: previous?.drawn, player,
-        stride: previous?.stride ?? 0, moving: previous?.moving ?? 0 });
+        stride: previous?.stride ?? 0, gait: previous?.gait ?? 0 });
     }
     for (const id of this.positions.keys()) {
       if (!world.players.some(player => player.id === id)) this.positions.delete(id);
     }
     const key = world.map + JSON.stringify(world.crates);
     if (key !== this.terrain) {
+      if (previousCrates && !this.reducedMotion.matches && world.blasts.length) {
+        const remaining = new Set(world.crates.map(([x, y]) => y * W + x));
+        const wet = new Set(world.blasts.map(([x, y]) => y * W + x));
+        for (const [x, y, type] of previousCrates) {
+          if (wet.has(y * W + x) && !remaining.has(y * W + x)) {
+            this.burst(x + .5, y + .5, time, STAGES[theme.floor].wall, 6, sprite('03_obstacles', type));
+          }
+        }
+      }
       drawScenicBoard(this.baseContext, theme, world);
       this.terrain = key;
     }
@@ -218,10 +243,11 @@ export class Arena {
     }
   }
 
-  burst(x, y, time, color, count) {
+  burst(x, y, time, color, count, tile) {
     for (let i = 0; i < count; i++) {
       const angle = Math.PI * 2 * i / count + i * .12;
-      this.particles.push({ x: x * TILE, y: y * TILE, time, color, angle, distance: 24 + i % 5 * 10 });
+      this.particles.push({ x: x * TILE, y: y * TILE, time, color, angle,
+        distance: 24 + i % 5 * 10, tile, fragment: i });
     }
     if (this.particles.length > 140) this.particles.splice(0, this.particles.length - 140);
   }
@@ -232,22 +258,34 @@ export class Arena {
       const t = Math.max(0, (time - p.time) / 520);
       const distance = Math.sin(t * Math.PI / 2) * p.distance;
       const radius = 4.8 - t * 3;
+      const x = p.x + Math.cos(p.angle) * distance;
+      const y = p.y + Math.sin(p.angle) * distance - Math.sin(t * Math.PI) * (p.tile ? 21 : 15);
       ctx.globalAlpha = (1 - t) * .94;
-      ctx.fillStyle = p.color;
-      ctx.beginPath();
-      ctx.ellipse(p.x + Math.cos(p.angle) * distance, p.y + Math.sin(p.angle) * distance - Math.sin(t * 3) * 15,
-        radius, radius * .72, p.angle, 0, Math.PI * 2);
-      ctx.fill();
+      if (p.tile && p.fragment % 2 === 0) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(p.angle + t * 4);
+        ctx.drawImage(p.tile, 16 + p.fragment * 5, 19 + p.fragment * 3, 12, 12, -6, -5, 12, 10);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.ellipse(x, y, radius, radius * .72, p.angle, 0, TAU);
+        ctx.fill();
+      }
     }
     ctx.globalAlpha = 1;
   }
 
-  render(time, overview) {
+  render(time, overview, compact) {
     const world = this.world;
     if (world?.state !== 'playing') return;
     const ctx = this.ctx;
     const { width, height } = this.viewport || {};
     if (!width || !height) return;
+    const dt = this.frameTime === null ? 0 : clamp(time - this.frameTime, 0, 45);
+    this.frameTime = time;
+    const reduced = this.reducedMotion.matches;
     const pixelRatio = Math.min(devicePixelRatio || 1, 2);
     const canvasW = Math.round(width * pixelRatio), canvasH = Math.round(height * pixelRatio);
     if (this.canvas.width !== canvasW || this.canvas.height !== canvasH) {
@@ -261,46 +299,61 @@ export class Arena {
     for (const position of this.positions.values()) {
       const { from, player } = position;
       const previous = position.drawn || from;
-      position.drawn = player.id === this.localId && localDrawn ? localDrawn : {
+      const own = player.id === this.localId;
+      position.drawn = own && localDrawn ? localDrawn : {
         x: from.x + (player.x - from.x) * progress,
         y: from.y + (player.y - from.y) * progress,
       };
-      const distance = Math.hypot(position.drawn.x - previous.x, position.drawn.y - previous.y);
-      const stride = position.stride + Math.min(distance, .15) * 2.35;
-      if (player.id === this.localId && player.alive && !player.trapped && !world.countdown &&
-          Math.floor(stride * 2) > Math.floor(position.stride * 2)) this.steps++;
-      position.stride = stride % 1;
-      position.moving = distance > .005 ? time + 65 : position.moving;
+      position.facing = (own && this.local.facing) || player.facing || [0, 1];
+      const [dx, dy] = position.facing;
+      const forward = (position.drawn.x - previous.x) * dx + (position.drawn.y - previous.y) * dy;
+      const running = !world.countdown && player.alive && player.connected && !player.trapped && forward < .25;
+      const speed = running && dt ? clamp(forward * 1000 / dt / player.speed, 0, 1) : 0;
+      position.gait += (speed - position.gait) * (1 - Math.exp(-dt / (speed ? 52 : 75)));
+      const stride = position.stride + (running ? clamp(forward / STRIDE_LENGTH, 0, dt * .0026) : 0);
+      if (own && Math.floor(stride * 2) > Math.floor(position.stride * 2)) this.steps++;
+      position.stride = position.gait > .02 ? stride % 1 : 0;
     }
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.fillStyle = STAGES[this.theme.floor].edge;
     ctx.fillRect(0, 0, width, height);
     ctx.imageSmoothingEnabled = true;
     const local = this.positions.get(this.localId);
-    const follow = Boolean(!overview && local?.player.alive && !world.countdown);
+    const follow = Boolean(!overview && local?.player.alive);
     const fit = Math.min(width / SCENE_W, height / SCENE_H);
-    const scale = follow ? Math.max(fit * 1.23, clamp(width / 8.6, 36, 54) / TILE) : fit;
+    const close = compact
+      ? Math.min(width / 7.35, height / 5.1, 65) / TILE
+      : Math.max(fit * 1.23, clamp(width / 8.6, 36, 54) / TILE);
+    const targetScale = follow ? Math.max(fit, close) : fit;
+    const mix = this.camera && !reduced ? 1 - Math.exp(-dt / (this.camera.follow === follow ? 80 : 52)) : 1;
+    const scale = this.camera ? this.camera.scale + (targetScale - this.camera.scale) * mix : targetScale;
     const viewW = width / scale, viewH = height / scale;
+    const lead = !reduced && follow ? local.gait * .48 : 0;
     const target = follow ? {
-      x: followOffset(local.drawn.x, viewW, WIDTH),
-      y: followOffset(local.drawn.y, viewH, HEIGHT),
+      x: followOffset(local.drawn.x + (local.facing?.[0] || 0) * lead, viewW, WIDTH),
+      y: followOffset(local.drawn.y + (local.facing?.[1] || 0) * lead, viewH, HEIGHT),
     } : { x: (WIDTH - viewW) / 2, y: (HEIGHT - viewH) / 2 };
-    if (this.camera?.follow === follow) {
-      const mix = 1 - Math.exp(-Math.min(100, time - this.camera.time) / 49);
-      this.camera.x += (target.x - this.camera.x) * mix;
-      this.camera.y += (target.y - this.camera.y) * mix;
-    } else this.camera = { ...target, follow };
-    this.camera.time = time;
-    ctx.scale(scale, scale);
+    if (!this.camera || Math.abs(targetScale - scale) < .002 && !follow) {
+      this.camera = { ...target, scale: targetScale, follow };
+    } else {
+      // Smooth the viewport center so zooming stays centered on the arena or player.
+      const oldViewW = width / this.camera.scale, oldViewH = height / this.camera.scale;
+      const originX = this.camera.x + (oldViewW - viewW) / 2;
+      const originY = this.camera.y + (oldViewH - viewH) / 2;
+      const step = this.camera.follow === follow ? mix : Math.max(mix, .15);
+      this.camera.x = originX + (target.x - originX) * step;
+      this.camera.y = originY + (target.y - originY) * step;
+      this.camera.scale = scale;
+      this.camera.follow = follow;
+    }
+    ctx.scale(this.camera.scale, this.camera.scale);
     ctx.translate(-this.camera.x, -this.camera.y);
     ctx.drawImage(this.base, -BORDER_X, -BORDER_Y);
-    for (const [x, y, kind] of world.pickups) {
-      draw(ctx, '04_powerups', kind, x * TILE + 6, y * TILE + 6 + Math.sin(time / 240 + x) * 3, 52);
-    }
+    for (const [x, y, kind] of world.pickups) this.drawPickup(x, y, kind, time);
     for (const balloon of world.bombs) this.drawBalloon(balloon, elapsed);
     this.drawWater(world.blasts, elapsed);
     for (const position of [...this.positions.values()].sort((a, b) => a.drawn.y - b.drawn.y)) {
-      this.drawPlayer(position, time);
+      this.drawPlayer(position, time, compact);
     }
     this.renderParticles(ctx, time);
     if (world.countdown > 0) {
@@ -325,6 +378,20 @@ export class Arena {
     if (!this.steps) return false;
     this.steps = 0;
     return true;
+  }
+
+  drawPickup(x, y, kind, time) {
+    const ctx = this.ctx, left = x * TILE, top = y * TILE;
+    const hover = this.reducedMotion.matches ? 0 : Math.sin(time / 335 + x) * 3;
+    ctx.beginPath();
+    ctx.fillStyle = '#20314c35';
+    ctx.ellipse(left + 32, top + 51, 16, 5, 0, 0, TAU);
+    ctx.fill();
+    draw(ctx, '04_powerups', kind, left + 6, top + 5 + hover, 52);
+    ctx.beginPath();
+    ctx.fillStyle = '#ffefab90';
+    ctx.arc(left + 49, top + 13 - hover, Math.max(0, 1 + hover * .4), 0, TAU);
+    ctx.fill();
   }
 
   drawBalloon(balloon, elapsed) {
@@ -353,7 +420,7 @@ export class Arena {
     for (const [key, ttl] of visible) {
       const x = key % W, y = Math.floor(key / W);
       const px = x * TILE + 32, py = y * TILE + 32;
-      ctx.strokeStyle = '#1eb6efbb';
+      ctx.strokeStyle = '#1d87c99e';
       ctx.lineCap = 'round';
       ctx.lineWidth = Math.min(23, 8 + ttl / 22);
       ctx.beginPath();
@@ -366,6 +433,9 @@ export class Arena {
         ctx.lineTo(px, py + TILE);
       }
       ctx.stroke();
+      ctx.strokeStyle = '#98efffcc';
+      ctx.lineWidth *= .47;
+      ctx.stroke();
     }
     for (const [key, ttl] of visible) {
       const frame = frameAt(Math.max(0, 490 - ttl), SPLASH_MS);
@@ -373,52 +443,59 @@ export class Arena {
     }
   }
 
-  drawPlayer({ player, drawn, stride, moving }, time) {
+  drawPlayer({ player, drawn, stride, gait, facing }, time, compact) {
     const elapsed = time - (this.poses.get(player.id)?.time ?? -Infinity);
     const action = this.poses.get(player.id)?.type;
     if (!player.alive && !(action === 'out' && elapsed < 360)) return;
     const ctx = this.ctx, x = drawn.x * TILE, y = drawn.y * TILE;
+    const size = compact ? 89 : 84;
+    if (x + size < this.camera.x || x - size > this.camera.x + this.viewport.width / this.camera.scale ||
+        y + size < this.camera.y || y - size * 2 > this.camera.y + this.viewport.height / this.camera.scale) return;
     const reduced = this.reducedMotion.matches;
     const trapped = player.trapped;
-    const walking = moving > time && !trapped && !reduced;
-    const facing = (player.id === this.localId && this.local.facing) || player.facing || [0, 1];
+    const effort = !trapped && !reduced ? gait : 0;
     const [dx, dy] = facing;
-    const phase = stride * Math.PI * 2;
-    const step = Math.sin(phase);
-    const lift = walking ? Math.abs(step) * 5 : trapped ? 7 + Math.sin(time / 126) * 4 : Math.sin(time / 350) * 1.6;
-    let squash = 1;
+    const phase = stride * TAU;
+    const lift = Math.sin(phase) ** 2;
+    const idle = reduced ? 0 : Math.sin(time / 410 + drawn.x) * (1 - effort);
+    const bounce = trapped ? 6 + Math.sin(time / 180) * 3 : lift * 2.7 * effort + idle * .65;
+    let squash = 1 + idle * .008 + (lift - .45) * effort * .024;
     let bump = 0;
-    let lean = walking ? Math.cos(phase) * .075 : 0;
+    let lean = effort * (dx * .027 + Math.sin(phase) * .018);
     if (elapsed < 380) {
       const p = elapsed / 380;
-      if (action === 'bomb') squash = 1 - .22 * Math.sin(Math.min(1, p * 2) * Math.PI) + .09 * Math.sin(p * Math.PI * 2);
+      if (action === 'bomb') squash -= .14 * Math.sin(p * Math.PI);
       if (['throw', 'pickup', 'rescue', 'cheer'].includes(action)) bump = (action === 'cheer' ? 24 : 15) * Math.sin(p * Math.PI);
       if (action === 'throw') lean += dx * .23 * Math.sin(p * Math.PI);
       if (action === 'trap') lean += Math.sin(p * 20) * (1 - p) * .2;
       if (action === 'out') squash = 1 - p * .48;
     }
-    const bob = reduced ? 0 : lift + bump;
-    const size = 81;
+    const bob = reduced ? 0 : bounce + bump;
     const feet = y + 20;
+    const own = player.id === this.localId;
     ctx.save();
-    ctx.globalAlpha = player.alive ? (player.connected ? 1 : .55) : Math.max(0, 1 - elapsed / 360);
-    ctx.fillStyle = player.id === this.localId ? '#ffed5a' : player.team ? '#f47e93' : '#44bfff';
+    const opacity = player.alive ? (player.connected ? 1 : .55) : Math.max(0, 1 - elapsed / 360);
+    ctx.globalAlpha = opacity * (1 - Math.min(.65, Math.max(0, bob) / 42));
+    ctx.fillStyle = '#182b415c';
     ctx.beginPath();
-    ctx.ellipse(x, feet - 2, 24, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + 2, feet - 2, 23, 8, 0, 0, TAU);
     ctx.fill();
+    ctx.strokeStyle = own ? '#ffdf8d' : player.team ? '#f795ae' : '#76deff';
+    ctx.lineWidth = own ? 2.8 : 2;
+    ctx.stroke();
+    ctx.globalAlpha = opacity;
     ctx.translate(x, feet - bob);
     ctx.rotate(lean);
-    const striding = walking && Math.abs(step) > .43;
+    const striding = effort > .24 && lift > .52;
     const pose = trapped ? null : dy < 0 ? 'north' : dx ? (striding ? 'side' : 'side-pass') : striding ? 'south' : null;
     const image = (pose && runCostume(player.avatar, pose)) || costume(player.avatar);
-    const mirror = dx < 0 || (!dx && walking && step < 0) ? -1 : 1;
-    const strideStretch = walking ? .055 * Math.abs(step) : pose ? -.033 : 0;
-    ctx.scale(mirror * (2 - squash - strideStretch), squash + strideStretch);
+    // Keep asymmetric costume details facing the same way throughout a stride.
+    ctx.scale((dx < 0 && !trapped ? -1 : 1) * (2 - squash), squash);
     if (image) ctx.drawImage(image, -size / 2, -size, size, size);
     ctx.restore();
     if (!player.alive) return;
     if (player.trapped || player.shield) {
-      const radius = player.trapped ? 38 + Math.sin(time / 120) * 2 : 39;
+      const radius = player.trapped && !reduced ? 38 + Math.sin(time / 120) * 2 : 39;
       const bubbleY = y - 18 - bob;
       const bubble = ctx.createRadialGradient(x - 11, bubbleY - 14, 1, x, bubbleY, radius);
       bubble.addColorStop(0, '#bafcff8a');
@@ -444,8 +521,7 @@ export class Arena {
     ctx.font = 'bold 18px Trebuchet MS, sans-serif';
     const nameWidth = Math.min(ctx.measureText(player.name).width, 139) + 20;
     const nameX = clamp(x, nameWidth / 2 + 3, WIDTH - nameWidth / 2 - 3);
-    const nameY = y - 67 - bob * .6;
-    const own = player.id === this.localId;
+    const nameY = feet - size - bob;
     ctx.fillStyle = own ? '#073968ea' : '#11264be8';
     ctx.strokeStyle = own ? '#ffdd8c' : '#b3eaffba';
     ctx.lineWidth = 1.5;

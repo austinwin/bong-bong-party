@@ -40,8 +40,8 @@ AUTH_KEY = (os.environ.get('BB_AUTH_SECRET') or secrets.token_urlsafe(48)).encod
 REVISION = os.getenv('RENDER_GIT_COMMIT', 'local')
 ASSET_ROOT = Path(__file__).resolve().parent / 'frontend' / 'assets'
 AUDIO_ASSETS = frozenset(json.loads((ASSET_ROOT / 'asset_manifest.json').read_text())['categories']['08_audio'])
-ARCADE_AUDIO = frozenset(('lobby_parade', 'balloon_rally', 'place', 'throw', 'splash',
-                          'prize', 'bubble', 'rescue', 'pop', 'go', 'step'))
+ARCADE_AUDIO = frozenset(('breezy_plaza', 'splash_rally', 'place', 'throw', 'splash',
+                          'prize', 'bubble', 'rescue', 'pop', 'go', 'step', 'cheer', 'kick', 'win', 'loss'))
 STARTS = [(1, 1), (13, 11), (13, 1), (1, 11), (7, 1), (7, 11), (1, 6), (13, 6)]
 AVATARS = ('berry_pixie', 'cloud_tech', 'duckling', 'fox_scout', 'frog_kid', 'little_bat', 'night_wizard', 'turtle_scholar')
 MAPS = {
@@ -341,7 +341,7 @@ class Room:
             return True
         bomb.slide = direction
         bomb.move_at = (now if now is not None else time.monotonic()) + .11
-        self.event('kick', x=tile[0], y=tile[1])
+        self.event('kick', who=player.id, x=tile[0], y=tile[1])
         return False
 
     def move_bomb(self, tile: tuple[int, int], direction: tuple[int, int]) -> bool:

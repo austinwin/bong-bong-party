@@ -30,11 +30,23 @@ def instrument(note, duration, kind):
     release = np.minimum((duration - t) / .045, 1)
     pitch = frequency(note)
     phase = 2 * np.pi * pitch * t
-    if kind == 'lead':
-        # Marimba body with a soft, rapidly decaying mallet overtone.
-        tone = np.sin(phase) + .29 * np.sin(phase * 2) + .16 * np.sin(phase * 3)
-        tone += .14 * np.sin(phase * 3.98) * np.exp(-t * 28)
-        envelope = np.exp(-t * 5.8)
+    if kind == 'mallet':
+        tone = np.sin(phase) + .26 * np.sin(phase * 2) + .15 * np.sin(phase * 3)
+        tone += .21 * np.sin(phase * 4.02) * np.exp(-t * 19)
+        envelope = np.exp(-t * 4.6)
+    elif kind == 'reed':
+        vibrato = .21 * np.sin(2 * np.pi * 5.3 * t) * np.minimum(t / .19, 1)
+        tone = .8 * np.sin(phase + vibrato) + .22 * np.sin(2 * phase + vibrato) + .19 * np.sin(3 * phase)
+        attack = np.minimum(t / .024, 1)
+        envelope = np.exp(-t * 2.1)
+    elif kind == 'pluck':
+        tone = np.sin(phase) + .22 * np.sin(phase * 2) + .15 * np.sin(phase * 4) * np.exp(-t * 17)
+        envelope = np.exp(-t * 8.4)
+    elif kind == 'pad':
+        tone = .44 * (np.sin(phase * .997) + np.sin(phase * 1.003)) + .18 * np.sin(phase * 2)
+        attack = np.minimum(t / .11, 1)
+        release = np.minimum((duration - t) / .21, 1)
+        envelope = 1 - np.minimum(t / duration, 1) * .26
     elif kind == 'bell':
         tone = np.sin(phase) + .27 * np.sin(phase * 2.02) + .12 * np.sin(phase * 3.96)
         envelope = np.exp(-t * 7)
@@ -47,11 +59,12 @@ def instrument(note, duration, kind):
     return tone * envelope * attack * release
 
 
-def score(name, tempo, chords, melody, busy=False):
+def score(name, tempo, chords, melody, match=False):
     beat = 60 / tempo
     length = round(len(chords) * 4 * beat * RATE)
     output = np.zeros(length)
     rng = np.random.default_rng(31)
+
     def mix(at, audio, gain):
         index = round(RATE * beat * at)
         indexes = (np.arange(len(audio)) + index) % length
@@ -69,29 +82,43 @@ def score(name, tempo, chords, melody, busy=False):
         elif kind == 'hat':
             sound = np.r_[0, np.diff(noise)] * np.exp(-t * 101) * .36
         else:
-            sound = (.45 * noise + .37 * np.sin(2 * np.pi * 180 * t)) * np.exp(-t * 55)
+            sound = (.21 * noise + .38 * np.sin(2 * np.pi * 180 * t) + .12 * np.sin(2 * np.pi * 240 * t)) * np.exp(-t * 43)
         mix(at, sound * np.minimum(t / .002, 1), gain)
 
     for bar, (bass, tones) in enumerate(chords):
         base = bar * 4
-        for at, pitch in [(0, bass), (1.5, bass + 12), (2, bass + 7), (3.5, bass + 12)]:
-            note(base + at, pitch, .51, 'bass', .118 if busy else .1)
-        for at in ((.5, 1.5, 2.5, 3.5) if busy else (.5, 2.5)):
-            for pitch in tones:
-                note(base + at, pitch, .7, 'chord', .045)
+        chorus = 4 <= bar < 8 or 12 <= bar
+        bridge = 8 <= bar < 12
+        swing = .068 if match else .12
+        bassline = [(0, bass), (1.5 + swing, bass + 12), (2, bass + 7), (3.5 + swing, bass + 12)]
+        if bridge:
+            bassline = [(0, bass), (2.5 + swing, bass + 7)]
+        for at, pitch in bassline:
+            note(base + at, pitch, .75 if bridge else .57, 'bass', .13 if match else .113)
+        for offset, pitch in zip((.5, 1.5, 2.5, 3.5), (*tones, tones[1])):
+            note(base + offset + swing, pitch + (12 if bridge else 0), .57, 'pluck', .052)
+        for pitch in tones:
+            note(base, pitch, 4.08, 'pad', .025 if chorus else .018)
         for slot, pitch in enumerate(melody[bar]):
-            if pitch:
-                note(base + slot / 2, pitch, .60, 'lead', .169 if slot % 2 == 0 else .139)
-                if slot in (0, 4, 7):
-                    note(base + slot / 2, pitch + 12, .58, 'bell', .049)
-        for at in (0, 2) if not busy else (0, 1.75, 2.5):
-            drum(base + at, 'kick', .11)
+            if not pitch:
+                continue
+            at = base + slot / 2 + swing * (slot % 2)
+            sustain = slot == 7 or not melody[bar][slot + 1]
+            voice = 'reed' if (bridge or chorus and sustain) else 'mallet'
+            note(at, pitch, .82 if sustain else .51, voice, .14 if slot % 2 == 0 else .105)
+            note(at + .385, pitch, .58, 'mallet', .021)
+            if chorus and slot in (0, 4, 7):
+                note(at, pitch + 12, .67, 'bell', .035)
+        for at in ((0, 1.75, 2.5) if match and not bridge else (0, 2)):
+            drum(base + at, 'kick', .108 if match else .076)
         for at in (1, 3):
-            drum(base + at, 'snare', .08)
-        for step in range(8):
-            drum(base + step / 2, 'hat', .028 + .017 * (step % 2))
+            drum(base + at, 'snare', .07 if chorus else .052)
+        for step in range(4 if bridge else 8):
+            spacing = 1 if bridge else .5
+            drum(base + step * spacing + swing * (step % 2), 'hat', .018 + .012 * (step % 2))
         if bar % 4 in (1, 3):
-            note(base + 3.25, tones[-1] + 12, .53, 'bell', .041)
+            note(base + 2.76, tones[1] + 12, .40, 'bell', .035)
+            note(base + 3.30, tones[-1] + 12, .68, 'bell', .049)
     save(name, output)
 
 
@@ -104,7 +131,7 @@ LOBBY_CHORDS = [
 LOBBY_TUNE = [
     [72,0,76,79,0,76,74,72], [69,72,76,0,81,79,76,0], [77,0,76,72,69,72,77,0], [74,71,67,0,74,77,79,0],
     [84,0,79,76,72,0,76,79], [83,79,76,0,71,74,76,0], [81,0,77,72,69,72,77,76], [74,0,71,74,79,77,74,0],
-    [76,81,0,84,81,0,79,76], [71,76,0,79,76,74,71,0], [72,77,0,81,84,81,77,0], [76,79,84,0,79,76,72,0],
+    [69,0,72,0,76,0,79,0], [76,0,71,0,67,0,71,0], [72,0,77,0,81,0,77,0], [76,0,79,0,84,0,79,0],
     [74,77,81,0,77,74,72,0], [69,72,77,0,81,77,76,0], [74,0,79,77,74,71,67,0], [72,0,76,79,84,0,79,0],
 ]
 MATCH_CHORDS = [
@@ -116,7 +143,7 @@ MATCH_CHORDS = [
 MATCH_TUNE = [
     [79,74,76,79,83,0,79,76],[74,0,71,74,79,81,83,0],[76,79,83,79,76,74,71,0],[76,0,79,83,86,83,79,0],
     [84,79,76,79,84,0,86,84],[79,76,72,76,79,0,84,0],[86,81,78,81,86,84,81,78],[74,78,81,0,86,84,81,0],
-    [79,83,86,0,83,79,76,79],[78,83,86,0,90,86,83,0],[84,0,81,79,76,72,76,79],[81,86,84,81,78,74,78,0],
+    [74,0,79,0,83,0,79,0],[78,0,74,0,83,0,74,0],[76,0,79,0,84,0,79,0],[78,0,74,0,81,0,78,0],
     [76,79,83,0,86,83,79,76],[81,84,88,0,84,81,79,76],[84,79,76,79,84,86,84,81],[78,0,81,78,74,76,78,0],
 ]
 
@@ -142,9 +169,18 @@ def cue(name, duration, parts, splash=0):
     save(name, out)
 
 
+def jingle(name, notes):
+    output = np.zeros(round(RATE * 1.45))
+    for at, pitch, voice, gain in notes:
+        start = round(at * RATE)
+        sound = instrument(pitch, .46, voice)
+        output[start:start + len(sound)] += gain * sound
+    save(name, output)
+
+
 if __name__ == '__main__':
-    score('lobby_parade', 113, LOBBY_CHORDS, LOBBY_TUNE)
-    score('balloon_rally', 143, MATCH_CHORDS, MATCH_TUNE, busy=True)
+    score('breezy_plaza', 110, LOBBY_CHORDS, LOBBY_TUNE)
+    score('splash_rally', 134, MATCH_CHORDS, MATCH_TUNE, match=True)
     cue('place', .19, [(0,.12,860,316,.38),(.054,.13,590,975,.19)])
     cue('throw', .29, [(0,.19,410,1190,.29),(.12,.15,940,410,.25)], .09)
     cue('splash', .35, [(0,.17,280,97,.29),(.041,.118,910,447,.16),(.152,.15,776,503,.13)], .55)
@@ -154,3 +190,9 @@ if __name__ == '__main__':
     cue('pop', .24, [(0,.15,842,225,.33),(.05,.175,390,235,.15)], .18)
     cue('go', .34, [(0,.14,685,900,.25),(.105,.218,1020,1430,.23)])
     cue('step', .09, [(0,.079,248,139,.22)], .055)
+    cue('cheer', .48, [(0,.145,565,960,.21),(.10,.17,800,1120,.23),(.23,.23,1240,1360,.19)])
+    cue('kick', .23, [(0,.10,342,142,.34),(.04,.178,560,340,.21)], .12)
+    jingle('win', [(0,72,'mallet',.25),(.12,76,'mallet',.22),(.24,79,'mallet',.22),(.36,84,'bell',.24),
+                   (.52,79,'reed',.15),(.59,84,'reed',.14),(.62,76,'bell',.19),(.75,88,'bell',.15),(.92,84,'bell',.12)])
+    jingle('loss', [(0,77,'mallet',.21),(.15,76,'mallet',.18),(.32,72,'reed',.14),(.48,69,'mallet',.15),
+                    (.64,65,'bell',.14),(.77,72,'bell',.14),(.91,77,'bell',.11)])
