@@ -262,7 +262,7 @@ img, canvas { image-rendering: pixelated; }
   .in-match .game-body { display: block; }
   .in-match .game-side { display: none; }
   .in-match .play-panel { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; }
-  .in-match .arena-wrap { width: min(100%, calc((100dvh - 66px) * 1.1538)); }
+  .in-match .arena-wrap { width: min(100%, calc((100dvh - 86px) * 1.1538)); }
   .in-match .mobile-controls { display: contents; }
   .in-match .dpad, .in-match .mobile-actions { position: fixed; bottom: max(22px, env(safe-area-inset-bottom)); }
   .in-match .dpad { left: max(8px, env(safe-area-inset-left)); }
