@@ -19,6 +19,11 @@ async function trackPlayback(page) {
   await page.addInitScript(() => {
     const context = window.AudioContext || window.webkitAudioContext;
     window.arcadePlayback = { clips: [], decoded: 0 };
+    const resume = context.prototype.resume;
+    context.prototype.resume = function () {
+      window.arcadePlayback.context = this;
+      return resume.call(this);
+    };
     const decode = context.prototype.decodeAudioData;
     context.prototype.decodeAudioData = async function (...args) {
       const buffer = await decode.apply(this, args);
@@ -137,6 +142,60 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
   } finally {
     await other.close();
   }
+});
+
+test('first phone tap unlocks sound before loading and can recover after interruption', async ({ page }, info) => {
+  test.skip(info.project.name !== 'iphone-webkit', 'Exercises the iPhone WebKit audio path.');
+  await trackPlayback(page);
+  let releaseManifest;
+  const manifest = new Promise(resolve => { releaseManifest = resolve; });
+  await page.route('**/assets/asset_manifest.json', async route => {
+    await manifest;
+    await route.continue();
+  });
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
+  try {
+    await page.getByRole('button', { name: 'Bật âm thanh', exact: true }).tap();
+    await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'loading');
+  } finally {
+    releaseManifest();
+  }
+  await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'on');
+  await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop))).toBe(true);
+  await page.evaluate(async () => {
+    const audio = window.arcadePlayback.context;
+    await audio.suspend();
+  });
+  await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'locked');
+  const effects = await page.evaluate(() => window.arcadePlayback.clips.filter(clip => !clip.loop).length);
+  await page.getByRole('button', { name: 'Bật âm thanh', exact: true }).tap();
+  await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'on');
+  await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.filter(clip => !clip.loop).length)).toBeGreaterThan(effects);
+});
+
+test('short phone keeps the board, joystick and sound within reach', async ({ page }, info) => {
+  test.skip(info.project.name !== 'iphone-webkit', 'Checks the small WebKit portrait and landscape viewports.');
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Tập chơi' })).toBeInViewport({ ratio: 1 });
+  await page.getByRole('button', { name: 'Tập chơi' }).tap();
+  await page.getByRole('button', { name: 'Bắt đầu' }).tap();
+  await expect(page.locator('#arena')).toBeVisible();
+  for (const viewport of [{ width: 320, height: 568 }, { width: 750, height: 342 }]) {
+    await page.setViewportSize(viewport);
+    for (const id of ['gameCanvas', 'joystick', 'mobileBomb', 'audioSettings']) {
+      await expect(page.locator('#' + id)).toBeInViewport({ ratio: .99 });
+    }
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBe(viewport.height);
+  }
+  await page.locator('#audioSettings').tap();
+  await expect(page.getByRole('button', { name: 'Thử âm thanh' })).toBeInViewport();
+  await page.getByRole('button', { name: 'Người chơi và vật phẩm' }).tap();
+  await expect(page.getByRole('heading', { name: 'Thông tin trận' })).toBeInViewport();
+  await expect(page.getByRole('heading', { name: 'Vật phẩm' })).toBeVisible();
+  await page.getByRole('button', { name: 'Đóng', exact: true }).tap();
+  await expect(page.locator('#gameSide')).toBeHidden();
+  await expect(page.locator('#joystick')).toBeInViewport({ ratio: 1 });
 });
 
 test('touch movement and balloon placement can run together', async ({ page, context }, info) => {

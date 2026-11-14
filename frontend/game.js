@@ -47,7 +47,8 @@ const preferences = {
   music: stored('bb_music', 'on') !== 'off', sfx: stored('bb_sfx', 'on') !== 'off',
   musicVolume: volume('bb_music_vol', 55), sfxVolume: volume('bb_sfx_vol', 70),
 };
-const audio = new ArcadeAudio(preferences);
+const audio = new ArcadeAudio(preferences, showAudioStatus);
+const compactMatch = matchMedia('(max-width: 700px), (pointer: coarse) and (max-height: 540px)');
 const arena = new Arena($('gameCanvas'));
 let maps = {};
 
@@ -205,9 +206,9 @@ function leave(explicit = true) {
   $('arena').hidden = true;
   $('playControls').hidden = true;
   $('statsPanel').hidden = true;
-  $('soundPanel').hidden = true;
-  $('audioSettings').setAttribute('aria-expanded', 'false');
+  toggleSoundPanel(false);
   document.body.classList.remove('in-match');
+  updateMatchLayout();
   $('homeScreen').hidden = false;
   $('gameToast').hidden = true;
   history.replaceState({}, '', location.pathname);
@@ -292,10 +293,12 @@ function receive(world) {
   $('timer').textContent = mins + ':' + String(world.time % 60).padStart(2, '0');
   const count = `${world.players.filter(player => player.connected).length} / ${world.practice ? 1 : 8}`;
   $('playerCounter').textContent = $('matchCount').textContent = count;
+  $('detailsCount').textContent = count;
   if (active) arena.receive(world, maps[world.map], state.id);
   else renderRoom(world);
   renderRoster(world);
   if (active) renderInventory(me, controlsDisabled);
+  if (active !== wasActive) updateMatchLayout();
 }
 
 function localPlayer() {
@@ -452,7 +455,49 @@ function act(type) {
 function updateAudioControls() {
   $('musicToggle').setAttribute('aria-pressed', String(preferences.music));
   $('soundToggle').setAttribute('aria-pressed', String(preferences.sfx));
+  $('testSound').disabled = !preferences.sfx || !preferences.sfxVolume;
   audio.update();
+}
+
+function showAudioStatus(status) {
+  const button = $('audioSettings');
+  if (button.dataset.audio === status && button.hasAttribute('aria-label')) return;
+  const labels = { locked: 'Bật âm thanh', loading: 'Đang tải âm thanh', on: 'Âm thanh', muted: 'Âm thanh tắt', unavailable: 'Thử lại âm thanh' };
+  const messages = {
+    locked: 'Chạm để bật hoặc khôi phục âm thanh.',
+    loading: 'Đang tải âm thanh…',
+    on: 'Âm thanh đã sẵn sàng.',
+    muted: 'Nhạc và hiệu ứng đang tắt.',
+    unavailable: 'Âm thanh chưa tải được. Hãy thử lại.',
+  };
+  $('audioLabel').textContent = labels[status];
+  button.dataset.audio = status;
+  button.setAttribute('aria-label', labels[status]);
+  $('audioStatus').textContent = messages[status];
+}
+
+function toggleSoundPanel(open) {
+  $('soundPanel').hidden = !open;
+  $('audioSettings').setAttribute('aria-expanded', String(open));
+}
+
+function toggleMatchDetails(open, returnFocus = false) {
+  $('gameScreen').classList.toggle('details-open', open);
+  $('matchDetails').setAttribute('aria-expanded', String(open));
+  $('detailsBackdrop').hidden = !open;
+  $('gameSide').inert = compactMatch.matches && document.body.classList.contains('in-match') && !open;
+  document.querySelector('.play-panel').inert = open;
+  if (open) $('closeDetails').focus();
+  else if (returnFocus) $('matchDetails').focus();
+}
+
+function updateMatchLayout() {
+  const compact = compactMatch.matches && document.body.classList.contains('in-match');
+  const parent = document.querySelector(compact ? '.match-actions' : '.header-actions');
+  if ($('audioSettings').parentNode !== parent) parent.prepend($('audioSettings'));
+  const shareParent = compact ? $('detailsActions') : document.querySelector('.match-actions');
+  if ($('shareRoom').parentNode !== shareParent) shareParent.prepend($('shareRoom'));
+  toggleMatchDetails(false);
 }
 
 function updateCameraButton() {
@@ -471,6 +516,14 @@ function bind() {
   $('nickname').onchange = profile;
   $('joinForm').onsubmit = event => { event.preventDefault(); enter($('roomCode').value); };
   $('shareRoom').onclick = async () => {
+    if (!navigator.clipboard?.writeText && navigator.share) {
+      try {
+        await navigator.share({ title: 'Bong Bong Party', url: location.href });
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+      }
+    }
     try {
       await navigator.clipboard.writeText(location.href);
       toast('Đã sao chép liên kết mời!');
@@ -488,26 +541,30 @@ function bind() {
     if (input.value.trim() && send({ type: 'chat', value: input.value.trim() })) input.value = '';
   };
   $('audioSettings').onclick = () => {
-    $('soundPanel').hidden = !$('soundPanel').hidden;
-    $('audioSettings').setAttribute('aria-expanded', String(!$('soundPanel').hidden));
+    const retry = ['locked', 'unavailable'].includes($('audioSettings').dataset.audio);
+    audio.unlock({ testSound: retry, retry });
+    toggleSoundPanel($('soundPanel').hidden || retry);
   };
+  $('testSound').onclick = () => audio.unlock({ testSound: true, retry: true });
   $('musicToggle').onclick = () => {
     preferences.music = !preferences.music;
     save('bb_music', preferences.music ? 'on' : 'off');
     updateAudioControls();
+    audio.unlock();
   };
   $('soundToggle').onclick = () => {
     preferences.sfx = !preferences.sfx;
     save('bb_sfx', preferences.sfx ? 'on' : 'off');
     updateAudioControls();
-    audio.play('pickup');
+    audio.unlock({ testSound: preferences.sfx });
   };
   for (const [id, key, store] of [['musicVolume', 'musicVolume', 'bb_music_vol'], ['sfxVolume', 'sfxVolume', 'bb_sfx_vol']]) {
     $(id).value = preferences[key] * 100;
     $(id).oninput = event => {
       preferences[key] = Number(event.target.value) / 100;
       save(store, event.target.value);
-      audio.update();
+      updateAudioControls();
+      audio.unlock();
     };
   }
   $('zoomMap').onclick = () => {
@@ -516,6 +573,24 @@ function bind() {
     updateCameraButton();
   };
   updateCameraButton();
+  $('matchDetails').onclick = () => {
+    toggleSoundPanel(false);
+    clearInput();
+    toggleMatchDetails(true);
+  };
+  for (const id of ['closeDetails', 'detailsBackdrop']) $(id).onclick = () => toggleMatchDetails(false, true);
+  compactMatch.addEventListener('change', updateMatchLayout);
+  document.addEventListener('click', event => {
+    if (!$('soundPanel').hidden && !event.target.closest('#audioSettings, #soundPanel')) toggleSoundPanel(false);
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    if (!$('detailsBackdrop').hidden) toggleMatchDetails(false, true);
+    if (!$('soundPanel').hidden) {
+      toggleSoundPanel(false);
+      $('audioSettings').focus();
+    }
+  });
   bindControls();
 }
 
@@ -564,13 +639,13 @@ function bindControls() {
     $(id).addEventListener('pointerdown', event => {
       if (event.button !== 0) return;
       event.preventDefault();
-      audio.unlock();
+      if (event.pointerType === 'mouse') audio.unlock();
       act(action);
     });
     $(id).addEventListener('click', event => { if (!event.detail) act(action); });
   }
   window.addEventListener('keydown', event => {
-    if (event.target.matches?.('input, textarea, select') || state.world?.state !== 'playing' ||
+    if (!$('detailsBackdrop').hidden || event.target.matches?.('input, textarea, select') || state.world?.state !== 'playing' ||
       event.ctrlKey || event.metaKey || event.altKey) return;
     const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
     const action = { ' ': 'bomb', r: 'throw', e: 'detonate' }[key];
@@ -586,7 +661,14 @@ function bindControls() {
   });
   window.addEventListener('blur', clearInput);
   window.addEventListener('pagehide', clearInput);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) clearInput(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) clearInput();
+    audio.foregroundChanged();
+  });
+  window.addEventListener('pageshow', () => audio.foregroundChanged());
+  document.addEventListener('pointerup', event => {
+    if (event.pointerType !== 'mouse' && event.target.closest('#joystick, .bomb-action, .action-extras')) audio.unlock();
+  }, { capture: true });
   document.addEventListener('focusin', event => { if (event.target.matches('input, select, textarea')) clearInput(); });
   document.addEventListener('click', () => audio.unlock(), { capture: true });
   window.addEventListener('keydown', () => audio.unlock(), { capture: true });
@@ -622,8 +704,7 @@ async function boot() {
       const img = image('04_powerups', kind, title);
       img.title = title;
       img.dataset.kind = kind;
-      $('itemPreview').append(img);
-      $('inventory').append(img.cloneNode());
+      $('inventory').append(img);
     }
     for (const [id, map] of Object.entries(maps)) {
       const option = node('option', map.name);

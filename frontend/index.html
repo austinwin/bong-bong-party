@@ -18,11 +18,13 @@
       </button>
       <div class="header-actions">
         <span class="connection" id="serverStatus" role="status">Đang kết nối</span>
-        <button id="audioSettings" class="blue-button" aria-expanded="false" aria-controls="soundPanel">♪ Âm thanh</button>
+        <button id="audioSettings" class="blue-button audio-button" data-audio="locked" aria-expanded="false" aria-controls="soundPanel"><span class="audio-note" aria-hidden="true">♪</span> <span id="audioLabel">Bật âm thanh</span></button>
       </div>
       <section class="sound-panel panel" id="soundPanel" aria-label="Âm thanh" hidden>
+        <p id="audioStatus" role="status">Chạm để bật âm thanh.</p>
         <div><button id="musicToggle" class="blue-button" aria-pressed="true">Nhạc nền</button><input aria-label="Âm lượng nhạc" type="range" id="musicVolume" min="0" max="100" value="55"></div>
         <div><button id="soundToggle" class="blue-button" aria-pressed="true">Hiệu ứng</button><input aria-label="Âm lượng hiệu ứng" type="range" id="sfxVolume" min="0" max="100" value="70"></div>
+        <button id="testSound" class="gold-button" type="button">Thử âm thanh</button>
       </section>
     </header>
     <main>
@@ -38,6 +40,11 @@
             <img class="hero-sprite balloon" src="/assets/05_water_balloons/balloon_03.png" alt="">
           </div>
         </section>
+        <div class="lobby-actions">
+          <button id="quickPlay" class="gold-button" disabled>Chơi nhanh</button>
+          <button id="createRoom" class="blue-button" disabled>Tạo phòng</button>
+          <button id="practice" class="blue-button" disabled>Tập chơi</button>
+        </div>
         <div class="lobby-main">
           <section class="profile-panel panel">
             <h2 class="panel-heading">Chọn nhân vật</h2>
@@ -54,22 +61,16 @@
           <section class="rooms-panel panel">
             <h2 class="panel-heading">Sảnh chờ <span id="roomCount"></span></h2>
             <div class="rooms-body">
-              <div class="lobby-actions">
-                <button id="quickPlay" class="gold-button" disabled>Chơi nhanh</button>
-                <button id="createRoom" class="blue-button" disabled>Tạo phòng</button>
-                <button id="practice" class="blue-button" disabled>Tập chơi</button>
-              </div>
-              <div class="room-columns"><span>Mã phòng</span><span>Bản đồ</span><span>Người chơi</span><button id="refreshRooms" aria-label="Làm mới danh sách" title="Làm mới danh sách">↻</button></div>
-              <div id="roomList" class="room-list"><p class="empty-list">Đang tải phòng…</p></div>
               <form id="joinForm" class="join-form">
                 <label for="roomCode">Có mã mời?</label>
                 <input class="field" id="roomCode" placeholder="ABC234" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Mã phòng">
                 <button id="joinRoom" type="submit" class="sprite-btn sprite-join" aria-label="Vào phòng" disabled></button>
               </form>
+              <div class="room-columns"><span>Mã phòng</span><span>Bản đồ</span><span>Người chơi</span><button id="refreshRooms" aria-label="Làm mới danh sách" title="Làm mới danh sách">↻</button></div>
+              <div id="roomList" class="room-list"><p class="empty-list">Đang tải phòng…</p></div>
             </div>
           </section>
         </div>
-        <div class="lobby-help"><div id="itemPreview" class="item-preview" aria-label="Vật phẩm"></div></div>
       </section>
 
       <section id="gameScreen" class="game-screen" hidden>
@@ -78,6 +79,7 @@
           <div class="match-meters">
             <div class="hud-timer" aria-label="Thời gian"><span class="clock-face" aria-hidden="true"></span><strong id="timer">02:45</strong></div>
             <div class="hud-count" aria-label="Người chơi"><span class="people-icon" aria-hidden="true"></span><span id="matchCount"></span></div>
+            <button id="matchDetails" class="blue-button phone-details-button" aria-label="Người chơi và vật phẩm" aria-expanded="false" aria-controls="gameSide"><span class="people-icon" aria-hidden="true"></span><span id="detailsCount"></span></button>
           </div>
           <div class="match-actions">
             <button id="shareRoom" class="blue-button">Mời bạn</button>
@@ -131,7 +133,9 @@
               <button id="mobileBomb" class="bomb-action" aria-label="Đặt bóng nước"><img src="/assets/05_water_balloons/balloon_01.png" alt=""><span>Đặt bom</span></button>
             </div>
           </div>
-          <aside class="game-side">
+          <button type="button" id="detailsBackdrop" class="details-backdrop" aria-label="Đóng thông tin trận" hidden></button>
+          <aside class="game-side" id="gameSide">
+            <div class="panel-heading details-heading"><h2>Thông tin trận</h2><div id="detailsActions"><button class="blue-button" id="closeDetails" type="button">Đóng</button></div></div>
             <section class="panel roster-panel"><h2 class="panel-heading">Người chơi <span id="playerCounter">0 / 8</span></h2><div id="roster" class="roster"></div></section>
             <section class="panel stats-panel" id="statsPanel" hidden><h2 class="panel-heading">Vật phẩm</h2><div id="inventory" class="inventory"></div><p id="myStats" class="my-stats"></p></section>
             <section class="panel chat-panel"><h2 class="panel-heading">Trò chuyện</h2><div id="chatMessages" class="chat-log" role="log"></div><form id="chatForm" class="chat-entry"><input class="field" id="chatInput" maxlength="110" placeholder="Nhắn bạn bè…" autocomplete="off" aria-label="Tin nhắn"><button class="gold-button" type="submit">Gửi</button></form></section>
