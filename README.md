@@ -11,6 +11,8 @@ An independent Vietnamese water-balloon arcade inspired by Boom Online. The supp
 5. Break crates to reveal upgrades. Water traps players in bubbles. Touch a trapped teammate to rescue them or a trapped opponent to eliminate them. The last surviving team or player wins. A round that reaches the time limit is a draw.
 6. Check your round totals and choose **Chơi lại** or return to the lobby. **Tập chơi** has an open escape route and a starter crate that always drops a speed pickup. A room with an open slot can admit spectators during a match.
 
+On a phone, open **Người chơi và vật phẩm → Điều khiển** to move the joystick to either side or select a shorter thumb throw. These settings are saved in the browser.
+
 ## Run locally
 
 Requires Python 3.12 or newer. Node.js is only used for browser tests.
@@ -41,7 +43,8 @@ Pass `BASE_URL=https://bong-bong-party.onrender.com` to exercise the Render serv
 - QPyServe runs FastAPI and serves the same-origin Canvas client. The server owns collision, items, ballistics, time and results. A 30 Hz simulation publishes snapshots at roughly 15 Hz in active matches. Each connection has a bounded send queue. The client predicts at most 0.52 tiles ahead and uses the server's input acknowledgement to handle turns and releases. The server and client both limit corner assist to nearby blocked turns. The client interpolates other players.
 - A 128-bit random guest ID and a signed reconnect token live in HttpOnly cookies. Nickname, character, audio and camera preferences live in the browser. Players have 38 seconds to reconnect to a surviving room. A replacement socket keeps the player's seat, score and position.
 - The service uses one worker and one instance. Rooms, scores and chat are in memory. Render restarts end active matches. Free-tier cold starts can delay the first connection. Supabase is unnecessary for the current transient room model.
-- Canvas targets 60 FPS via `requestAnimationFrame`. The renderer caches terrain and advances the run cycle by forward distance, with about four footfalls per second at base speed. Reduced-motion settings disable stride effects and camera easing. The sound settings provide separate music and effects gains, plus optional touch vibration when the browser supports it. Web Audio starts after a tap and can resume after an interruption.
-- The original arrangements **Breezy Plaza** and **Splash Rally** use layered mallet, reed, pluck, bass and percussion voices. Both loop, and the result jingle briefly lowers the background music. The supplied kit WAVs remain in use for cues and audio fallbacks. To regenerate the added PCM files, install NumPy and run `python tools/compose_audio.py` from the repository root.
+- Canvas targets 60 FPS via `requestAnimationFrame`. The renderer advances the four-phase run cycle by forward distance, with about four footfalls per second at base speed. Each direction alternates the leading leg. Reduced-motion settings disable stride effects and camera easing. The sound settings provide separate music and effects gains, plus optional touch vibration when the browser supports it.
+- **Sảnh Bóng Bóng**, **Đường Làng**, and **Sân Băng** are original compositions with distinct lobby, warm-map, and cool-map arrangements. The classic BnB pairing of light prepare music and upbeat match music informed the score. The source credits describe the renewal arrangements. [Big Bro Sound credits](https://www.bigbrosound.com/bnb)
+- The stereo FLAC loops load on demand with a supplied WAV fallback. Web Audio starts after a tap, can resume after an interruption, and lowers music briefly for the result jingle. To regenerate the WAV and FLAC files, install NumPy and SoundFile and run `python tools/compose_audio.py` from the repository root.
 
 [Asset audit](reference/ASSET_AUDIT.md) · [Historical comparison](docs/VISUAL_QA.md) · [Artwork prompts](docs/ART_PROMPTS.md) · [Render deployment](DEPLOY.md)

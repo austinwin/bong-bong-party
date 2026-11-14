@@ -9,8 +9,10 @@ export const costume = name => sprites.get(`10_costumes/${name}.webp`) || sprite
 export const avatarUrl = name => costume(name)?.src || assetUrl('01_characters', name + '.png');
 export const scenery = name => sprites.get(`11_scenery/${name}.webp`);
 export const runCostume = (name, direction) => sprites.get(`12_motion/${name}-${direction}.webp`);
-const LOBBY_MUSIC = 'breezy_plaza';
-const MATCH_MUSIC = 'splash_rally';
+const LOBBY_MUSIC = 'bubble_plaza';
+const QUIET_MAPS = new Set(['winter', 'lagoon', 'moon', 'castle']);
+const matchTrack = map => QUIET_MAPS.has(map) ? 'frost_hop' : 'village_dash';
+const RUN_POSES = ['north', 'north-other', 'north-settle', 'side', 'side-other', 'side-pass', 'south', 'south-other'];
 
 export async function readManifest() {
   const response = await fetch('/assets/asset_manifest.json');
@@ -33,20 +35,29 @@ export async function loadImages(manifest) {
     })));
 }
 
-export async function loadIllustrations(avatars) {
-  const images = {
+export function loadIllustrations(avatars) {
+  return loadWebp({
     '10_costumes': avatars,
     '11_scenery': ['lantern_house', 'topiary', 'toadstool', 'blue_house', 'snow_pine', 'palm'],
-    '12_motion': avatars.flatMap(name => ['north', 'side', 'side-pass', 'south'].map(dir => `${name}-${dir}`)),
-  };
-  await Promise.all(Object.entries(images).flatMap(([category, files]) => files.map(async name => {
+  });
+}
+
+export function loadMotion(avatars, selected) {
+  const files = [selected, ...avatars.filter(name => name !== selected)]
+    .flatMap(name => RUN_POSES.map(pose => `${name}-${pose}`));
+  return loadWebp({ '12_motion': files }, 'low');
+}
+
+function loadWebp(images, priority = 'auto') {
+  return Promise.all(Object.entries(images).flatMap(([category, files]) => files.map(async name => {
     const image = new Image();
+    image.fetchPriority = priority;
     image.src = assetUrl(category, name + '.webp');
     try {
       await image.decode();
       sprites.set(`${category}/${name}.webp`, image);
     } catch {
-      // Keep the original kit sprites available if an illustration fails to load.
+      // The renderer keeps the standing and directional fallback sprites available.
     }
   })));
 }
@@ -57,11 +68,13 @@ export class ArcadeAudio {
     this.onStatus = onStatus;
     this.buffers = new Map();
     this.musicName = LOBBY_MUSIC;
+    this.musicLoads = new Map();
     this.lastSounds = new Map();
   }
 
-  prepare(originals, additions = []) {
+  prepare(originals, additions = [], music = []) {
     this.files = { originals, additions };
+    this.musicFiles = new Set(music);
     const sources = [
       ...originals.map(file => ['08_audio', file]),
       ...additions.map(name => ['13_audio', name + '.wav']),
@@ -75,6 +88,36 @@ export class ArcadeAudio {
       return [name, await response.arrayBuffer()];
     }).map(download => download.catch(() => null));
     this.decode();
+    this.loadTrack(this.musicName);
+  }
+
+  loadTrack(name, retry = false) {
+    const context = this.context;
+    if (!context || !this.preferences.music || !this.preferences.musicVolume ||
+        !this.musicFiles?.has(name) || this.buffers.has(name)) return;
+    const previous = this.musicLoads.get(name);
+    if (previous === 'loading' || (previous === 'failed' && !retry)) return;
+    this.musicLoads.set(name, 'loading');
+    fetch(assetUrl('13_audio', name + '.flac'))
+      .then(response => {
+        if (!response.ok) throw new Error(name);
+        return response.arrayBuffer();
+      })
+      .then(bytes => context.decodeAudioData(bytes))
+      .then(buffer => {
+        if (context !== this.context) return;
+        this.musicLoads.delete(name);
+        this.buffers.set(name, buffer);
+        this.update();
+      }, () => {
+        if (context !== this.context) return;
+        this.musicLoads.set(name, 'failed');
+        this.update();
+      });
+  }
+
+  prepareMatch(map) {
+    this.loadTrack(matchTrack(map));
   }
 
   unlock({ testSound = false, retry = false } = {}) {
@@ -98,6 +141,7 @@ export class ArcadeAudio {
       this.track = this.decoding = null;
       this.decoded = false;
       this.buffers.clear();
+      this.musicLoads.clear();
       this.lastSounds.clear();
       this.music = this.context.createGain();
       this.effects = this.context.createGain();
@@ -116,18 +160,20 @@ export class ArcadeAudio {
     if (retry && this.decoded && this.buffers.size < this.files.originals.length + this.files.additions.length) {
       this.decoded = false;
       this.decoding = null;
-      this.prepare(this.files.originals, this.files.additions);
+      this.prepare(this.files.originals, this.files.additions, this.musicFiles);
     }
+    this.loadTrack(this.musicName, retry);
     this.testPending ||= testSound;
     this.resume();
   }
 
-  scene(active = false, lastSeconds = false) {
-    const name = active ? MATCH_MUSIC : LOBBY_MUSIC;
-    const tempo = lastSeconds ? 1.05 : 1;
+  scene(active = false, lastSeconds = false, map) {
+    const name = active ? matchTrack(map) : LOBBY_MUSIC;
+    const tempo = lastSeconds ? 1.067 : 1;
     if (name === this.musicName && tempo === (this.tempo ?? 1)) return;
     this.musicName = name;
     this.tempo = tempo;
+    this.loadTrack(name);
     this.update();
   }
 
@@ -194,7 +240,7 @@ export class ArcadeAudio {
       this.music.gain.setTargetAtTime(music ? musicVolume * .83 : 0, now, .045);
       this.effects.gain.setTargetAtTime(sfx ? sfxVolume : 0, now, .045);
     }
-    const nextTrack = this.buffers.has(this.musicName) ? this.musicName : 'original_retro_lobby_loop';
+    const nextTrack = this.buffers.has(this.musicName) ? this.musicName : this.track?.name ?? 'original_retro_lobby_loop';
     if ((!music || !musicVolume || this.track?.name !== nextTrack) && this.track) {
       const { source, gain } = this.track;
       const now = this.context.currentTime;
@@ -228,7 +274,7 @@ export class ArcadeAudio {
       (!sfx || !sfxVolume || this.buffers.has('pickup'));
     const status = !this.enabled ? 'muted' : this.context?.state !== 'running' ? 'locked' :
       ready ? 'on' : this.decoded ? 'unavailable' : 'loading';
-    this.onStatus(status);
+    this.onStatus(status, this.track?.name);
   }
 
   play(name, { gain = 1, rate = 1, gap = 0, fallback } = {}) {

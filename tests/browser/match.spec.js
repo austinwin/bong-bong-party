@@ -32,7 +32,7 @@ function monitor(page) {
   page.on('pageerror', error => errors.push(error.message));
   page.on('response', response => {
     const path = new URL(response.url()).pathname;
-    if (path.endsWith('.wav') && response.ok()) downloads.add(path);
+    if (/\.(wav|flac)$/.test(path) && response.ok()) downloads.add(path);
   });
   page.on('websocket', socket => {
     socket.on('framereceived', ({ payload }) => history.push(JSON.parse(payload)));
@@ -60,7 +60,10 @@ async function trackPlayback(page) {
       const source = create.call(this);
       const start = source.start.bind(source);
       source.start = (...args) => {
-        window.arcadePlayback.clips.push({ seconds: source.buffer.duration, loop: source.loop, state: this.state });
+        window.arcadePlayback.clips.push({
+          seconds: source.buffer.duration, channels: source.buffer.numberOfChannels,
+          loop: source.loop, state: this.state,
+        });
         start(...args);
       };
       return source;
@@ -81,9 +84,11 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
     await page.locator('#nickname').fill('Ếch QA');
     await page.locator('#nickname').blur();
     await press(page.getByRole('button', { name: 'Ếch Xanh', exact: true }));
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(26);
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 34 && clip.state === 'running'))).toBeTruthy();
-    expect(first.downloads.size).toBe(26);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.decoded)).toBe(25);
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 50 &&
+      clip.channels === 2 && clip.state === 'running'))).toBeTruthy();
+    expect(first.downloads.size).toBe(25);
+    expect(first.downloads.has('/assets/13_audio/bubble_plaza.flac')).toBe(true);
     await expect(page.getByRole('button', { name: 'Tạo phòng' })).toBeInViewport();
     if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/${info.project.name}-lobby.png` });
 
@@ -113,7 +118,9 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
 
     await press(page.getByRole('button', { name: 'Bắt đầu' }));
     await expect(page.locator('#gameCanvas')).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 28 && clip.seconds < 29))).toBeTruthy();
+    await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.seconds > 45 &&
+      clip.seconds < 46 && clip.channels === 2))).toBeTruthy();
+    expect(first.downloads.has('/assets/13_audio/frost_hop.flac')).toBe(true);
     await expect.poll(() => first.state().countdown).toBeGreaterThan(0);
     await page.keyboard.press('Space');
     await expect.poll(() => first.state().countdown).toBe(0);
@@ -180,7 +187,7 @@ test('guest room, ready, movement, audio, trap, reconnect and rematch', async ({
   }
 });
 
-test('first phone tap unlocks sound before loading and can recover after interruption', async ({ page }, info) => {
+test('first phone tap unlocks sound and the score can recover after an interruption and failed download', async ({ page }, info) => {
   test.skip(info.project.name !== 'iphone-webkit', 'Exercises the iPhone WebKit audio path.');
   await trackPlayback(page);
   let releaseManifest;
@@ -189,6 +196,7 @@ test('first phone tap unlocks sound before loading and can recover after interru
     await manifest;
     await route.continue();
   });
+  await page.route('**/bubble_plaza.flac', route => route.abort(), { times: 1 });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
   try {
     await page.getByRole('button', { name: 'Bật âm thanh', exact: true }).tap();
@@ -197,7 +205,7 @@ test('first phone tap unlocks sound before loading and can recover after interru
     releaseManifest();
   }
   await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'on');
-  await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.channels === 1))).toBe(true);
   await page.evaluate(async () => {
     const audio = window.arcadePlayback.context;
     await audio.suspend();
@@ -207,6 +215,7 @@ test('first phone tap unlocks sound before loading and can recover after interru
   await page.getByRole('button', { name: 'Bật âm thanh', exact: true }).tap();
   await expect(page.locator('#audioSettings')).toHaveAttribute('data-audio', 'on');
   await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.filter(clip => !clip.loop).length)).toBeGreaterThan(effects);
+  await expect.poll(() => page.evaluate(() => window.arcadePlayback.clips.some(clip => clip.loop && clip.channels === 2))).toBe(true);
 });
 
 test('short phone keeps the board, joystick and sound within reach', async ({ page }, info) => {
@@ -228,10 +237,50 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   await expect(page.getByRole('button', { name: 'Thử âm thanh' })).toBeInViewport();
   await page.getByRole('button', { name: 'Người chơi và vật phẩm' }).tap();
   await expect(page.getByRole('heading', { name: 'Thông tin trận' })).toBeInViewport();
+  await page.locator('#controlSettings summary').tap();
+  await page.getByLabel('Vị trí cần').selectOption('right');
+  await page.getByLabel('Tầm kéo').selectOption('short');
   await expect(page.getByRole('heading', { name: 'Vật phẩm' })).toBeVisible();
   await page.getByRole('button', { name: 'Đóng', exact: true }).tap();
   await expect(page.locator('#gameSide')).toBeHidden();
   await expect(page.locator('#joystick')).toBeInViewport({ ratio: 1 });
+  expect((await page.locator('#joystick').boundingBox()).x).toBeGreaterThan((await page.locator('#mobileBomb').boundingBox()).x);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await expect(page.locator('#joystick')).toBeInViewport({ ratio: 1 });
+  expect((await page.locator('#joystick').boundingBox()).x).toBeGreaterThan((await page.locator('#mobileBomb').boundingBox()).x);
+  await page.reload();
+  await expect(page.locator('#playControls')).toHaveAttribute('data-stick-side', 'right');
+  await expect(page.locator('#stickReach')).toHaveValue('short');
+});
+
+test('wizard alternates both boots and the contact pose when moving up', async ({ page }, info) => {
+  test.skip(info.project.name !== 'iphone-webkit', 'Checks the rear walk cycle on the phone layout.');
+  const network = monitor(page);
+  await page.addInitScript(() => {
+    const drawImage = CanvasRenderingContext2D.prototype.drawImage;
+    window.wizardPoses = [];
+    CanvasRenderingContext2D.prototype.drawImage = function (source, ...args) {
+      const pose = source.src?.match(/night_wizard-(north(?:-settle|-other)?)\.webp$/)?.[1];
+      if (this.canvas.id === 'gameCanvas' && pose && window.wizardPoses.at(-1) !== pose) window.wizardPoses.push(pose);
+      return drawImage.call(this, source, ...args);
+    };
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Phù Thủy', exact: true }).tap();
+  await page.getByRole('button', { name: 'Tập chơi' }).tap();
+  await page.getByRole('button', { name: 'Bắt đầu' }).tap();
+  await expect(page.locator('#mobileBomb')).toBeEnabled();
+  await page.keyboard.down('ArrowDown');
+  await expect.poll(() => network.state()?.players[0].y).toBeGreaterThan(3.13);
+  await page.keyboard.up('ArrowDown');
+  await page.keyboard.down('ArrowUp');
+  await expect.poll(() => page.evaluate(() => window.wizardPoses)).toEqual(
+    expect.arrayContaining(['north-settle', 'north', 'north-other'])
+  );
+  await page.keyboard.up('ArrowUp');
+  const phases = await page.evaluate(() => window.wizardPoses);
+  expect(phases.indexOf('north')).toBeLessThan(phases.indexOf('north-other'));
+  if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-rear.png` });
 });
 
 test('the phone starts closer to the costume, eases out to the full board and remembers the view', async ({ page }, info) => {
@@ -397,7 +446,7 @@ test('touch steers, reverses and stops during stale snapshots, then plants with 
   await expect(stick).toHaveAttribute('data-active', '');
   await expect.poll(() => stick.evaluate(el => el.style.getPropertyValue('--stick-x'))).toBe('');
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
-  expect(motion.size).toBe(32);
+  await expect.poll(() => motion.size).toBe(64);
   expect(await page.evaluate(() => [...window.runFrames].filter(path => /-side(?:-pass)?\.webp$/.test(path)))).toHaveLength(2);
   expect(record.errors).toEqual([]);
 });

@@ -1,5 +1,5 @@
 import { Arena, drawPreview } from './arena.js';
-import { ArcadeAudio, assetUrl, avatarUrl, loadIllustrations, loadImages, readManifest } from './media.js';
+import { ArcadeAudio, assetUrl, avatarUrl, loadIllustrations, loadImages, loadMotion, readManifest } from './media.js';
 import { stickIntent } from './movement.js';
 
 const $ = id => document.getElementById(id);
@@ -22,6 +22,10 @@ const effects = {
   speed_boost: ['speed_boost'], shield: ['prize', 'pickup'], kick: ['kick', 'throw'], out: ['pop'],
   cheer: ['cheer', 'pickup'],
 };
+const trackNames = {
+  bubble_plaza: 'Sảnh Bóng Bóng', village_dash: 'Đường Làng', frost_hop: 'Sân Băng',
+  original_retro_lobby_loop: 'Nhạc sảnh cổ điển',
+};
 const connectionErrors = {
   4000: 'Phòng đang mở ở một thẻ khác.',
   4401: 'Phiên đã hết hạn. Vui lòng tải lại trang.',
@@ -41,6 +45,8 @@ const state = {
   room: '', id: '', socket: null, world: null, retries: 0, lastEvent: 0, seq: 0,
   keys: new Set(), stick: null, overview: savedOverview(),
   haptics: stored('bb_haptics', 'on') === 'on',
+  stickSide: stored('bb_stick_side', 'left') === 'right' ? 'right' : 'left',
+  stickReach: stored('bb_stick_reach', 'normal') === 'short' ? 'short' : 'normal',
   pending: false, ready: false, chatIds: new Set(), cheerUntil: 0,
 };
 function volume(key, fallback) {
@@ -222,6 +228,7 @@ function leave(explicit = true) {
   $('gameScreen').hidden = true;
   $('arena').hidden = true;
   $('matchReadout').hidden = true;
+  $('controlSettings').hidden = true;
   $('playControls').hidden = true;
   $('statsPanel').hidden = true;
   toggleSoundPanel(false);
@@ -292,7 +299,8 @@ function receive(world) {
     audio.result(winner(localPlayer(), world));
   }
   const active = world.state === 'playing';
-  audio.scene(active, active && world.time <= 30);
+  audio.scene(active, active && world.time <= 30, world.map);
+  if (!active && previous?.map !== world.map) audio.prepareMatch(world.map);
   const me = localPlayer();
   const wasActive = previous?.state === 'playing';
   if (world.round !== previous?.round) {
@@ -306,6 +314,7 @@ function receive(world) {
   }
   $('arena').hidden = $('statsPanel').hidden = !active;
   $('playControls').hidden = !active || !me || me.spectator;
+  $('controlSettings').hidden = $('playControls').hidden;
   $('zoomMap').hidden = !me?.alive;
   const controlsDisabled = !me?.alive || me?.trapped || Boolean(world.countdown);
   const available = me && !me.spectator && active
@@ -369,7 +378,7 @@ function renderMatchReadout(world, me, available) {
   if (!tip.hidden) {
     state.practiceMoved ||= Math.hypot(me.x - 1.5, me.y - 1.5) > .64;
     const stats = me.roundStats || {};
-    setText('practiceTip', !state.practiceMoved ? 'Kéo nhẹ để đi chậm' : !stats.placed ? 'Thử đặt một bóng nước' :
+    setText('practiceTip', !state.practiceMoved ? 'Kéo cần để di chuyển' : !stats.placed ? 'Thử đặt một bóng nước' :
       !stats.cleared ? 'Phá thùng, né tia nước' : !stats.collected ? 'Tìm và nhặt vật phẩm' : 'Đã hoàn thành tập chơi!');
   }
 }
@@ -576,7 +585,9 @@ function updateAudioControls() {
   audio.update();
 }
 
-function showAudioStatus(status) {
+function showAudioStatus(status, track) {
+  setText('soundTrack', trackNames[track] || '');
+  $('soundTrack').hidden = !trackNames[track];
   const button = $('audioSettings');
   if (button.dataset.audio === status && button.hasAttribute('aria-label')) return;
   const labels = { locked: 'Bật âm thanh', loading: 'Đang tải âm thanh', on: 'Âm thanh', muted: 'Âm thanh tắt', unavailable: 'Thử lại âm thanh' };
@@ -700,6 +711,19 @@ function bind() {
     save('bb_camera', state.overview ? 'off' : 'on');
     updateCameraButton();
   };
+  $('playControls').dataset.stickSide = $('stickSide').value = state.stickSide;
+  $('stickReach').value = state.stickReach;
+  $('stickSide').onchange = event => {
+    clearInput();
+    state.stickSide = event.target.value;
+    $('playControls').dataset.stickSide = state.stickSide;
+    save('bb_stick_side', state.stickSide);
+  };
+  $('stickReach').onchange = event => {
+    clearInput();
+    state.stickReach = event.target.value;
+    save('bb_stick_reach', state.stickReach);
+  };
   $('cheer').onclick = () => {
     audio.unlock();
     if (!send({ type: 'cheer' })) return;
@@ -734,13 +758,14 @@ function bindControls() {
   const stick = $('joystick');
   function readStick(event) {
     const control = state.stick;
-    const x = (event.clientX - control.x) / control.radius;
-    const y = (event.clientY - control.y) / control.radius;
+    const reach = control.radius * (state.stickReach === 'short' ? .76 : 1);
+    const x = (event.clientX - control.x) / reach;
+    const y = (event.clientY - control.y) / reach;
     const intent = stickIntent(x, y, control.direction, control.pace);
     Object.assign(control, intent);
     const [dx, dy] = directions[intent.direction] || [0, 0];
-    const reach = Math.abs(dx * x + dy * y);
-    const travel = Math.max(0, Math.min(.53, (reach - .08) * .79)) * control.radius;
+    const push = Math.abs(dx * x + dy * y);
+    const travel = Math.max(0, Math.min(.53, (push - .08) * .79)) * control.radius;
     stick.style.setProperty('--stick-x', `${Math.round(dx * travel)}px`);
     stick.style.setProperty('--stick-y', `${Math.round(dy * travel)}px`);
     move();
@@ -823,8 +848,9 @@ async function boot() {
       }),
       fetch('/api/assets').then(response => response.json()),
     ]);
-    audio.prepare(manifest.categories['08_audio'], catalog.arcadeAudio);
+    audio.prepare(manifest.categories['08_audio'], catalog.arcadeAudio, catalog.arcadeMusic);
     await Promise.all([loadImages(manifest), loadIllustrations(catalog.avatars)]);
+    loadMotion(catalog.avatars, state.avatar);
     maps = catalog.maps;
     for (const avatar of catalog.avatars) {
       const button = node('button', undefined, 'avatar-choice');
@@ -833,7 +859,17 @@ async function boot() {
       button.title = names[avatar];
       button.setAttribute('aria-label', names[avatar]);
       button.append(image('01_characters', avatar));
-      button.onclick = () => { chooseAvatar(avatar); audio.play('pickup'); };
+      button.onclick = () => {
+        chooseAvatar(avatar);
+        if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          $('selectedAvatar').animate([
+            { transform: 'translateY(0) scale(.98)' },
+            { transform: 'translateY(-5px) scale(1.075)', offset: .42 },
+            { transform: 'translateY(0) scale(1)' },
+          ], { duration: 310, easing: 'ease-out' });
+        }
+        audio.play('pickup');
+      };
       $('avatarPicker').append(button);
     }
     chooseAvatar(state.avatar);

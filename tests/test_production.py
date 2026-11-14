@@ -249,16 +249,29 @@ def test_audio_transport_matches_every_supplied_wav():
 
 def test_arcade_audio_catalog_serves_composed_loops_and_feedback():
     with TestClient(app) as client:
-        names = client.get('/api/assets').json()['arcadeAudio']
+        catalog = client.get('/api/assets').json()
+        names = catalog['arcadeAudio']
         assert set(names) == {file.stem for file in (KIT / '13_audio').glob('*.wav')}
-        assert len(names) == 15
+        assert len(names) == 13
         for name in names:
             response = client.get(f'/assets/13_audio/{name}.wav')
             assert response.status_code == 200
             assert response.headers['content-type'] == 'audio/wav'
             with wave.open(BytesIO(response.content), 'rb') as clip:
                 duration = clip.getnframes() / clip.getframerate()
-                assert (duration > 20) == (name in {'breezy_plaza', 'splash_rally'})
+                assert 0 < duration < 2
                 if name in {'win', 'loss'}:
                     assert 1.4 < duration < 1.5
         assert client.get('/assets/13_audio/other.wav').status_code == 404
+        tracks = set(catalog['arcadeMusic'])
+        assert tracks == {'bubble_plaza', 'village_dash', 'frost_hop'}
+        for name in tracks:
+            response = client.get(f'/assets/13_audio/{name}.flac')
+            assert response.status_code == 200
+            assert response.headers['content-type'] == 'audio/flac'
+            assert response.content[:4] == b'fLaC'
+            stream_info = int.from_bytes(response.content[18:26], 'big')
+            sample_rate = stream_info >> 44
+            assert ((stream_info >> 41) & 7) + 1 == 2
+            assert 40 < (stream_info & ((1 << 36) - 1)) / sample_rate < 52
+        assert client.get('/assets/13_audio/other.flac').status_code == 404

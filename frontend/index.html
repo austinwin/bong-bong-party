@@ -22,6 +22,7 @@
       </div>
       <section class="sound-panel panel" id="soundPanel" aria-label="Âm thanh" hidden>
         <p id="audioStatus" role="status">Chạm để bật âm thanh.</p>
+        <p id="soundTrack" class="sound-track" hidden></p>
         <div><button id="musicToggle" class="blue-button" aria-pressed="true">Nhạc nền</button><input aria-label="Âm lượng nhạc" type="range" id="musicVolume" min="0" max="100" value="55"></div>
         <div><button id="soundToggle" class="blue-button" aria-pressed="true">Hiệu ứng</button><input aria-label="Âm lượng hiệu ứng" type="range" id="sfxVolume" min="0" max="100" value="70"></div>
         <button id="testSound" class="gold-button" type="button">Thử âm thanh</button>
@@ -135,7 +136,7 @@
               </div>
               <div class="control-center">
                 <div class="control-utilities">
-                  <button id="zoomMap" class="blue-button" aria-pressed="true"><span class="map-icon" aria-hidden="true"></span><span id="cameraLabel">Toàn bản đồ</span></button>
+                  <button id="zoomMap" class="blue-button" aria-pressed="true"><span class="map-icon" aria-hidden="true"></span><span id="cameraLabel">Toàn bản đồ</span><span class="phone-label" aria-hidden="true">Bản đồ</span></button>
                   <button id="cheer" class="blue-button" type="button" aria-label="Cổ vũ" title="Cổ vũ"><img src="/assets/04_powerups/star.png" alt=""><span>Cổ vũ</span></button>
                 </div>
                 <div class="keyboard-help"><span><kbd>↑</kbd> <kbd>↓</kbd> <kbd>←</kbd> <kbd>→</kbd> Di chuyển</span><span><kbd>Space</kbd> Đặt bom</span></div>
@@ -150,6 +151,13 @@
           <button type="button" id="detailsBackdrop" class="details-backdrop" aria-label="Đóng thông tin trận" hidden></button>
           <aside class="game-side" id="gameSide">
             <div class="panel-heading details-heading"><h2>Thông tin trận</h2><div id="detailsActions"><button class="blue-button" id="closeDetails" type="button">Đóng</button></div></div>
+            <details class="panel control-settings" id="controlSettings" hidden>
+              <summary>Điều khiển</summary>
+              <label for="stickSide">Vị trí cần</label>
+              <select class="field" id="stickSide"><option value="left">Bên trái</option><option value="right">Bên phải</option></select>
+              <label for="stickReach">Tầm kéo</label>
+              <select class="field" id="stickReach"><option value="normal">Chuẩn</option><option value="short">Ngắn</option></select>
+            </details>
             <section class="panel roster-panel"><h2 class="panel-heading">Người chơi <span id="playerCounter">0 / 8</span></h2><div id="roster" class="roster"></div></section>
             <section class="panel stats-panel" id="statsPanel" hidden><h2 class="panel-heading">Vật phẩm</h2><div id="inventory" class="inventory"></div><p id="myStats" class="my-stats"></p></section>
             <section class="panel chat-panel"><h2 class="panel-heading">Trò chuyện</h2><div id="chatMessages" class="chat-log" role="log"></div><form id="chatForm" class="chat-entry"><input class="field" id="chatInput" maxlength="110" placeholder="Nhắn bạn bè…" autocomplete="off" aria-label="Tin nhắn"><button class="gold-button" type="submit">Gửi</button></form></section>

@@ -10,3 +10,5 @@ The browser suite can capture the lobby, ready room, active match and a joystick
 The refreshed art uses the kit's cobalt interface, equipment icons, costume silhouettes and stage props. The desktop side roster follows the June 2007 reference. Phones move the balloon, water range and speed readout above the board, with the roster in the details sheet. The portrait controls sit below the arena, and short landscape keeps them on either side.
 
 Phones default to **Theo nhân vật**. The camera stays steady during small corrections and the overview button switches to **Toàn bản đồ**. Subtle corner brackets mark the player's current tile. A warm ring under a balloon indicates that its fuse is nearly spent, and the HUD shows a countdown if the player is trapped.
+
+The iPhone WebKit scenario verifies the wizard rear view while the character walks north. It checks the two distinct boot positions with a contact pose in between. The short-phone scenario checks the mirrored joystick and bomb layout in portrait and landscape.

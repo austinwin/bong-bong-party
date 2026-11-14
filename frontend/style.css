@@ -203,6 +203,7 @@ img[src$=".webp"] { image-rendering: auto; }
   border-radius: 3px;
   background: radial-gradient(circle, #ffdf8d 23%, transparent 30%), radial-gradient(circle, transparent 47%, #c4e6e6 54% 60%, transparent 65%);
 }
+.phone-label { display: none; }
 
 .room-content { display: grid; grid-template-columns: minmax(0, 1fr) minmax(157px, 28%); gap: 12px; padding: 12px; }
 .room-players { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-content: start; gap: 6px; }
@@ -253,12 +254,24 @@ img[src$=".webp"] { image-rendering: auto; }
 .chat-log b { color: var(--gold); }
 .chat-entry { display: flex; gap: 5px; padding: 0 6px 7px; }
 .chat-entry .field { min-height: 35px; font-size: 13px; }
+.control-settings { padding: 6px 8px; }
+.control-settings summary {
+  min-height: 34px; padding: 7px 4px; color: #dceeff; font-weight: 800; cursor: pointer;
+}
+.control-settings label { display: block; margin: 4px 0 2px; color: #cde2ff; font-size: 12px; }
+.control-settings select { min-height: 40px; margin-bottom: 5px; }
+.sound-panel .sound-track { color: #ffe2a3; font-size: 12px; }
 
 .play-controls {
   position: relative; display: grid; grid-template-columns: var(--control-size) minmax(0, 1fr) var(--control-size);
   gap: 5px; align-items: center; justify-items: center; padding: 12px 10px 7px;
   user-select: none; -webkit-touch-callout: none;
 }
+.play-controls .joystick { grid-area: 1 / 1; }
+.play-controls .control-center { grid-area: 1 / 2; }
+.play-controls .bomb-action { grid-area: 1 / 3; }
+.play-controls[data-stick-side="right"] .joystick { grid-column: 3; }
+.play-controls[data-stick-side="right"] .bomb-action { grid-column: 1; }
 .joystick {
   position: relative; width: var(--control-size); aspect-ratio: 1; touch-action: none; cursor: grab;
   border: 2px solid #a7e5ee; border-radius: 50%; -webkit-tap-highlight-color: transparent;
@@ -454,7 +467,12 @@ kbd { display: inline-block; padding: 2px 4px; border: 1px solid #476776; border
     justify-content: center; width: 44px; min-height: 44px; padding: 0; touch-action: manipulation;
   }
   .in-match .control-center .action-extras button { font-size: 0; touch-action: none; }
-  .in-match #cameraLabel, .in-match #cheer span { display: none; }
+  .in-match #cameraLabel { display: none; }
+  .in-match .phone-label { display: inline; }
+  .in-match .control-utilities :is(#zoomMap, #cheer) {
+    flex-direction: column; gap: 3px; font-size: 9px; line-height: 1; white-space: nowrap;
+  }
+  .in-match #cheer img { width: 19px; }
   .in-match #zoomMap .map-icon { transform: scale(1.25); }
   .in-match .game-side { display: none; }
   .in-match .details-open .game-side {
@@ -504,6 +522,13 @@ kbd { display: inline-block; padding: 2px 4px; border: 1px solid #476776; border
   .in-match .joystick { left: max(7px, env(safe-area-inset-left)); }
   .in-match .bomb-action { right: max(7px, env(safe-area-inset-right)); }
   .in-match .control-center { position: fixed; top: max(54px, calc(env(safe-area-inset-top) + 53px)); right: max(7px, env(safe-area-inset-right)); width: var(--control-size); }
+  .in-match .play-controls[data-stick-side="right"] .joystick {
+    left: auto; right: max(7px, env(safe-area-inset-right));
+  }
+  .in-match .play-controls[data-stick-side="right"] .bomb-action,
+  .in-match .play-controls[data-stick-side="right"] .control-center {
+    right: auto; left: max(7px, env(safe-area-inset-left));
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .stick-knob { transition: none; }

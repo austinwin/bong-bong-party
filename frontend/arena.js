@@ -21,6 +21,11 @@ const BORDER_X = 24, BORDER_Y = 112;
 const SCENE_W = WIDTH + BORDER_X * 2, SCENE_H = HEIGHT + BORDER_Y * 2;
 const TAU = 2 * Math.PI;
 const STRIDE_LENGTH = 1.55;
+const STRIDE_FRAMES = {
+  north: ['north-settle', 'north', 'north-settle', 'north-other'],
+  south: [null, 'south', null, 'south-other'],
+  side: ['side-pass', 'side', 'side-pass', 'side-other'],
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -519,12 +524,15 @@ export class Arena {
     ctx.globalAlpha = opacity;
     ctx.translate(x, feet - bob);
     ctx.rotate(lean);
-    const striding = effort > .24 && lift > .52;
-    const pose = trapped ? null : dy < 0 ? 'north' : dx ? (striding ? 'side' : 'side-pass') : striding ? 'south' : null;
-    const image = (pose && runCostume(player.avatar, pose)) || costume(player.avatar);
+    const direction = dy < 0 ? 'north' : dx ? 'side' : 'south';
+    const poses = STRIDE_FRAMES[direction];
+    const waving = action === 'cheer' && elapsed < 380 && effort < .18;
+    const step = effort > .095 ? Math.floor(stride * poses.length) : 0;
+    const pose = trapped || waving ? null : poses[step];
+    const image = (pose && (runCostume(player.avatar, pose) || runCostume(player.avatar, direction))) || costume(player.avatar);
     // Keep asymmetric costume details facing the same way throughout a stride.
     ctx.scale((dx < 0 && !trapped ? -1 : 1) * (2 - squash), squash);
-    if (image) ctx.drawImage(image, -size / 2, -size, size, size);
+    if (image) ctx.drawImage(image, -size / 2, -size + (pose === 'north-settle' ? 6.5 : 0), size, size);
     ctx.restore();
     if (!player.alive) return;
     if (player.trapped || player.shield) {
@@ -549,12 +557,13 @@ export class Arena {
       draw(ctx, '04_powerups', 'star', x + 22, y - 75 - elapsed * .04, 36);
       ctx.restore();
     }
+    if (this.world.practice && own) return;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.font = 'bold 18px Trebuchet MS, sans-serif';
     const nameWidth = Math.min(ctx.measureText(player.name).width, 139) + 20;
     const nameX = clamp(x, nameWidth / 2 + 3, WIDTH - nameWidth / 2 - 3);
-    const nameY = feet - size - bob;
+    const nameY = feet - size - bob - 4;
     ctx.fillStyle = own ? '#073968ea' : '#11264be8';
     ctx.strokeStyle = own ? '#ffdd8c' : '#b3eaffba';
     ctx.lineWidth = 1.5;

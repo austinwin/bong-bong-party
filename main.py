@@ -44,8 +44,9 @@ AUTH_KEY = (os.environ.get('BB_AUTH_SECRET') or secrets.token_urlsafe(48)).encod
 REVISION = os.getenv('RENDER_GIT_COMMIT', 'local')
 ASSET_ROOT = Path(__file__).resolve().parent / 'frontend' / 'assets'
 AUDIO_ASSETS = frozenset(json.loads((ASSET_ROOT / 'asset_manifest.json').read_text())['categories']['08_audio'])
-ARCADE_AUDIO = frozenset(('breezy_plaza', 'splash_rally', 'place', 'throw', 'splash',
-                          'prize', 'bubble', 'rescue', 'pop', 'go', 'step', 'cheer', 'kick', 'win', 'loss'))
+ARCADE_AUDIO = frozenset(('place', 'throw', 'splash', 'prize', 'bubble', 'rescue',
+                          'pop', 'go', 'step', 'cheer', 'kick', 'win', 'loss'))
+ARCADE_MUSIC = frozenset(('bubble_plaza', 'village_dash', 'frost_hop'))
 STARTS = [(1, 1), (13, 11), (13, 1), (1, 11), (7, 1), (7, 11), (1, 6), (13, 6)]
 AVATARS = ('berry_pixie', 'cloud_tech', 'duckling', 'fox_scout', 'frog_kid', 'little_bat', 'night_wizard', 'turtle_scholar')
 MAPS = {
@@ -720,7 +721,8 @@ def session(request:Request,response:Response) -> dict[str,str]:
 
 @app.get('/api/assets')
 def assets() -> dict[str,Any]:
-    return {'avatars':list(AVATARS),'maps':MAPS,'items':list(ITEMS),'arcadeAudio':sorted(ARCADE_AUDIO)}
+    return {'avatars': list(AVATARS), 'maps': MAPS, 'items': list(ITEMS),
+            'arcadeAudio': sorted(ARCADE_AUDIO), 'arcadeMusic': sorted(ARCADE_MUSIC)}
 
 
 @app.get('/assets/08_audio/{name}')
@@ -734,9 +736,10 @@ def original_audio_asset(name: str) -> FileResponse:
 
 @app.get('/assets/13_audio/{name}')
 def arcade_audio_asset(name: str) -> FileResponse:
-    if not name.endswith('.wav') or name.removesuffix('.wav') not in ARCADE_AUDIO:
+    track, _, extension = name.rpartition('.')
+    if not ((extension == 'wav' and track in ARCADE_AUDIO) or (extension == 'flac' and track in ARCADE_MUSIC)):
         raise HTTPException(404)
-    return FileResponse(ASSET_ROOT / '13_audio' / name, media_type='audio/wav',
+    return FileResponse(ASSET_ROOT / '13_audio' / name, media_type=f'audio/{extension}',
                         headers={'Cache-Control': 'public, max-age=86400'})
 
 

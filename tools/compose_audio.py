@@ -1,6 +1,6 @@
 """Render the game's original, deterministic arcade score and feedback cues.
 
-Python 3 and NumPy are needed only to regenerate the committed mono PCM files.
+NumPy and SoundFile are needed only to regenerate the committed WAV and FLAC files.
 """
 from pathlib import Path
 import wave
@@ -35,10 +35,19 @@ def instrument(note, duration, kind):
         tone += .21 * np.sin(phase * 4.02) * np.exp(-t * 19)
         envelope = np.exp(-t * 4.6)
     elif kind == 'reed':
-        vibrato = .21 * np.sin(2 * np.pi * 5.3 * t) * np.minimum(t / .19, 1)
-        tone = .8 * np.sin(phase + vibrato) + .22 * np.sin(2 * phase + vibrato) + .19 * np.sin(3 * phase)
-        attack = np.minimum(t / .024, 1)
-        envelope = np.exp(-t * 2.1)
+        vibrato = .24 * np.sin(2 * np.pi * 5.3 * t) * np.minimum(t / .21, 1)
+        p = phase + vibrato
+        tone = .85 * np.sin(p) + .15 * np.sin(p * 2) + .24 * np.sin(p * 3) + .07 * np.sin(p * 5)
+        attack = np.minimum(t / .02, 1)
+        envelope = np.exp(-t * 2.25) * (.93 + .07 * np.sin(t * 28))
+    elif kind == 'flute':
+        p = phase + .19 * np.sin(2 * np.pi * 5.9 * t) * np.minimum(t / .17, 1)
+        tone = np.sin(p) + .17 * np.sin(p * 2) + .07 * np.sin(p * 4) * np.exp(-t * 8)
+        attack = np.minimum(t / .031, 1)
+        envelope = np.exp(-t * 1.95)
+    elif kind == 'pizz':
+        tone = np.sin(phase) + .51 * np.sin(phase * 2) + .22 * np.sin(phase * 3) + .11 * np.sin(phase * 6)
+        envelope = np.exp(-t * 10)
     elif kind == 'pluck':
         tone = np.sin(phase) + .22 * np.sin(phase * 2) + .15 * np.sin(phase * 4) * np.exp(-t * 17)
         envelope = np.exp(-t * 8.4)
@@ -51,7 +60,7 @@ def instrument(note, duration, kind):
         tone = np.sin(phase) + .27 * np.sin(phase * 2.02) + .12 * np.sin(phase * 3.96)
         envelope = np.exp(-t * 7)
     elif kind == 'bass':
-        tone = np.sin(phase) + .24 * np.sin(phase * 2) + .08 * np.sin(phase * 3)
+        tone = .82 * np.sin(phase) + .39 * np.sin(phase * 2) + .16 * np.sin(phase * 3)
         envelope = np.exp(-t * 8.2)
     else:
         tone = .48 * np.sin(phase) + .23 * np.sin(phase * 2) + .1 * np.sin(phase * 3)
@@ -59,67 +68,93 @@ def instrument(note, duration, kind):
     return tone * envelope * attack * release
 
 
-def score(name, tempo, chords, melody, match=False):
+def score(name, tempo, chords, melody, style):
     beat = 60 / tempo
     length = round(len(chords) * 4 * beat * RATE)
-    output = np.zeros(length)
+    output = np.zeros((length, 2))
     rng = np.random.default_rng(31)
+    village = style == 'village'
+    winter = style == 'winter'
+    swing = .068 if village else .12
 
-    def mix(at, audio, gain):
+    def mix(at, audio, gain, pan=0.0):
         index = round(RATE * beat * at)
         indexes = (np.arange(len(audio)) + index) % length
-        output[indexes] += audio * gain
+        # Keep a strong mono center even when the little countermelodies spread out.
+        output[indexes] += (audio * gain)[:, None] * np.sqrt(np.array((1 - pan, 1 + pan)))
 
-    def note(at, pitch, duration, kind, gain):
-        mix(at, instrument(pitch, duration * beat, kind), gain)
+    def note(at, pitch, duration, kind, gain, pan=0.0):
+        sound = instrument(pitch, duration * beat, kind)
+        mix(at, sound, gain, pan)
+        if kind in ('reed', 'bell', 'mallet', 'flute'):
+            mix(at + .236, sound, gain * .10, -.44)
+            mix(at + .389, sound, gain * .067, .48)
 
-    def drum(at, kind, gain):
-        t = np.arange(round(RATE * .14)) / RATE
+    def drum(at, kind, gain, pan=0):
+        t = np.arange(round(RATE * (.2 if kind == 'shaker' else .14))) / RATE
         noise = rng.normal(0, 1, len(t))
         if kind == 'kick':
-            phase = 2 * np.pi * (49 * t + 46 * (1 - np.exp(-t * 49)) / 49)
-            sound = np.sin(phase) * np.exp(-t * 29)
-        elif kind == 'hat':
-            sound = np.r_[0, np.diff(noise)] * np.exp(-t * 101) * .36
+            phase = 2 * np.pi * (55 * t + 65 * (1 - np.exp(-t * 42)) / 42)
+            sound = (np.sin(phase) + .18 * np.sin(phase * 2)) * np.exp(-t * 27)
+        elif kind == 'wood':
+            sound = (np.sin(2 * np.pi * 906 * t) + .32 * np.sin(2 * np.pi * 1850 * t)) * np.exp(-t * 57)
+        elif kind == 'shaker':
+            sound = np.r_[0, np.diff(noise)] * np.exp(-t * 34) * .30
         else:
-            sound = (.21 * noise + .38 * np.sin(2 * np.pi * 180 * t) + .12 * np.sin(2 * np.pi * 240 * t)) * np.exp(-t * 43)
-        mix(at, sound * np.minimum(t / .002, 1), gain)
+            sound = (.27 * noise + .45 * np.sin(2 * np.pi * 182 * t) + .12 * np.sin(2 * np.pi * 256 * t)) * np.exp(-t * 42)
+        mix(at, sound * np.minimum(t / .004, 1), gain, pan)
 
-    for bar, (bass, tones) in enumerate(chords):
+    for bar, (bass, chord) in enumerate(chords):
+        root, third, fifth = chord
         base = bar * 4
-        chorus = 4 <= bar < 8 or 12 <= bar
-        bridge = 8 <= bar < 12
-        swing = .068 if match else .12
-        bassline = [(0, bass), (1.5 + swing, bass + 12), (2, bass + 7), (3.5 + swing, bass + 12)]
+        bridge = 8 <= bar < 16
+        refrain = bar >= 16
+        stabs = [(.5, root), (1.5, fifth), (2.5, third), (3.5, fifth)]
+        bassline = [(0, bass), (1.5, bass + 12), (2, bass + 7), (3.5, bass + 12)]
         if bridge:
-            bassline = [(0, bass), (2.5 + swing, bass + 7)]
+            stabs = [(0, root), (1, fifth), (2, third + 12), (3, fifth)]
+            bassline = [(0, bass), (2.5, bass + 7), (3.5, bass + 12)]
         for at, pitch in bassline:
-            note(base + at, pitch, .75 if bridge else .57, 'bass', .13 if match else .113)
-        for offset, pitch in zip((.5, 1.5, 2.5, 3.5), (*tones, tones[1])):
-            note(base + offset + swing, pitch + (12 if bridge else 0), .57, 'pluck', .052)
-        for pitch in tones:
-            note(base, pitch, 4.08, 'pad', .025 if chorus else .018)
+            note(base + at, pitch, .62 if bridge else .53, 'bass', .135)
+        for offset, pitch in stabs:
+            at = base + offset + swing * (offset % 1 > 0)
+            note(at, pitch, .57, 'pizz', .066, -.39)
+            if refrain:
+                note(at + .043, pitch + 12, .47, 'pluck', .032, .37)
+        for pitch in chord:
+            note(base, pitch, 4.1, 'pad', .024 if bridge else .015, .32 if pitch == third else -.18)
+
         for slot, pitch in enumerate(melody[bar]):
             if not pitch:
+                if slot in (3, 5, 7):
+                    note(base + slot / 2 + swing, fifth + 12 - 5 * (slot == 5), .34,
+                         'bell' if winter else 'flute', .055, .36)
                 continue
             at = base + slot / 2 + swing * (slot % 2)
             sustain = slot == 7 or not melody[bar][slot + 1]
-            voice = 'reed' if (bridge or chorus and sustain) else 'mallet'
-            note(at, pitch, .82 if sustain else .51, voice, .14 if slot % 2 == 0 else .105)
-            note(at + .385, pitch, .58, 'mallet', .021)
-            if chorus and slot in (0, 4, 7):
-                note(at, pitch + 12, .67, 'bell', .035)
-        for at in ((0, 1.75, 2.5) if match and not bridge else (0, 2)):
-            drum(base + at, 'kick', .108 if match else .076)
+            voice = 'flute' if bridge else 'reed' if village or sustain else 'mallet'
+            note(at, pitch, .82 if sustain else .52, voice, .17 if slot % 2 == 0 else .128, -.08)
+            if refrain and slot in (0, 4, 6):
+                note(at, pitch - 12, .52, 'mallet', .073, -.24)
+            if winter and slot in (0, 3, 6):
+                note(at, pitch + 12, .55, 'bell', .033, .35)
+
+        for at in ((0, 1.75, 2.5, 3.5) if village and not bridge else (0, 2)):
+            drum(base + at, 'kick', .14 if village else .095)
         for at in (1, 3):
-            drum(base + at, 'snare', .07 if chorus else .052)
-        for step in range(4 if bridge else 8):
-            spacing = 1 if bridge else .5
-            drum(base + step * spacing + swing * (step % 2), 'hat', .018 + .012 * (step % 2))
-        if bar % 4 in (1, 3):
-            note(base + 2.76, tones[1] + 12, .40, 'bell', .035)
-            note(base + 3.30, tones[-1] + 12, .68, 'bell', .049)
-    save(name, output)
+            drum(base + at, 'snare' if village else 'wood', .094 if refrain else .069, -.19)
+        for at in (.5, 1.5, 2.5, 3.5):
+            drum(base + at + swing, 'shaker', .048, .29 if at < 2 else -.29)
+        if bar % 4 == 3:
+            drum(base + 3.26, 'wood', .064, .24)
+            drum(base + 3.76, 'wood', .047, -.24)
+            note(base + 3.34, fifth + 12, .64, 'bell', .057, .37)
+
+    DESTINATION.mkdir(exist_ok=True)
+    # FLAC stores the exact loop length, including the short ambience that wraps around.
+    from soundfile import write
+    output = np.rint(np.tanh(output * 1.45) * 4096) / 4096
+    write(DESTINATION / f'{name}.flac', output, RATE, subtype='PCM_16')
 
 
 LOBBY_CHORDS = [
@@ -129,22 +164,46 @@ LOBBY_CHORDS = [
     (50, [60, 62, 65]), (41, [60, 65, 69]), (43, [59, 62, 67]), (48, [60, 64, 67]),
 ]
 LOBBY_TUNE = [
-    [72,0,76,79,0,76,74,72], [69,72,76,0,81,79,76,0], [77,0,76,72,69,72,77,0], [74,71,67,0,74,77,79,0],
-    [84,0,79,76,72,0,76,79], [83,79,76,0,71,74,76,0], [81,0,77,72,69,72,77,76], [74,0,71,74,79,77,74,0],
-    [69,0,72,0,76,0,79,0], [76,0,71,0,67,0,71,0], [72,0,77,0,81,0,77,0], [76,0,79,0,84,0,79,0],
-    [74,77,81,0,77,74,72,0], [69,72,77,0,81,77,76,0], [74,0,79,77,74,71,67,0], [72,0,76,79,84,0,79,0],
+    [72, 0, 76, 79, 0, 76, 74, 72], [69, 72, 76, 0, 81, 79, 76, 0],
+    [77, 0, 76, 72, 69, 72, 77, 0], [74, 71, 67, 0, 74, 77, 79, 0],
+    [84, 0, 79, 76, 72, 0, 76, 79], [83, 79, 76, 0, 71, 74, 76, 0],
+    [81, 0, 77, 72, 69, 72, 77, 76], [74, 0, 71, 74, 79, 77, 74, 0],
+    [69, 0, 72, 0, 76, 0, 79, 0], [76, 0, 71, 0, 67, 0, 71, 0],
+    [72, 0, 77, 0, 81, 0, 77, 0], [76, 0, 79, 0, 84, 0, 79, 0],
+    [74, 77, 81, 0, 77, 74, 72, 0], [69, 72, 77, 0, 81, 77, 76, 0],
+    [74, 0, 79, 77, 74, 71, 67, 0], [72, 0, 76, 79, 84, 0, 79, 0],
 ]
-MATCH_CHORDS = [
-    (43,[59,62,67]), (43,[59,62,67]), (40,[59,64,67]), (40,[59,64,67]),
-    (48,[60,64,67]), (48,[60,64,67]), (50,[60,62,66]), (50,[60,62,66]),
-    (43,[59,62,67]), (47,[59,62,66]), (48,[60,64,67]), (50,[60,62,66]),
-    (40,[59,64,67]), (45,[60,64,69]), (48,[60,64,67]), (50,[60,62,66]),
+VILLAGE_CHORDS = [
+    (46, [58, 62, 65]), (41, [57, 60, 65]), (43, [58, 62, 67]), (39, [55, 58, 63]),
+    (46, [58, 62, 65]), (38, [57, 62, 66]), (39, [55, 58, 63]), (41, [57, 60, 65]),
+    (43, [58, 62, 67]), (39, [55, 58, 63]), (46, [58, 62, 65]), (41, [57, 60, 65]),
+    (39, [55, 58, 63]), (48, [55, 60, 63]), (41, [57, 60, 65]), (46, [58, 62, 65]),
 ]
-MATCH_TUNE = [
-    [79,74,76,79,83,0,79,76],[74,0,71,74,79,81,83,0],[76,79,83,79,76,74,71,0],[76,0,79,83,86,83,79,0],
-    [84,79,76,79,84,0,86,84],[79,76,72,76,79,0,84,0],[86,81,78,81,86,84,81,78],[74,78,81,0,86,84,81,0],
-    [74,0,79,0,83,0,79,0],[78,0,74,0,83,0,74,0],[76,0,79,0,84,0,79,0],[78,0,74,0,81,0,78,0],
-    [76,79,83,0,86,83,79,76],[81,84,88,0,84,81,79,76],[84,79,76,79,84,86,84,81],[78,0,81,78,74,76,78,0],
+VILLAGE_TUNE = [
+    [77, 77, 0, 74, 70, 0, 74, 77], [72, 0, 69, 72, 77, 0, 76, 72],
+    [74, 79, 77, 0, 74, 70, 74, 0], [75, 0, 79, 75, 70, 0, 67, 70],
+    [82, 0, 77, 74, 70, 74, 77, 0], [78, 0, 81, 78, 74, 0, 69, 74],
+    [75, 75, 0, 79, 82, 79, 75, 0], [77, 72, 69, 0, 72, 76, 77, 0],
+    [74, 0, 70, 0, 67, 74, 0, 79], [75, 0, 72, 0, 70, 75, 0, 79],
+    [77, 0, 74, 0, 70, 77, 0, 82], [81, 0, 77, 0, 72, 0, 69, 0],
+    [79, 77, 75, 0, 77, 0, 79, 82], [84, 0, 79, 75, 72, 0, 74, 75],
+    [77, 81, 77, 76, 72, 69, 0, 72], [70, 0, 74, 77, 82, 0, 77, 0],
+]
+WINTER_CHORDS = [
+    (45, [60, 64, 69]), (41, [57, 60, 65]), (48, [60, 64, 67]), (43, [59, 62, 67]),
+    (45, [60, 64, 69]), (46, [58, 62, 65]), (41, [57, 60, 65]), (40, [59, 64, 68]),
+    (50, [57, 62, 65]), (43, [59, 62, 67]), (48, [60, 64, 67]), (45, [60, 64, 69]),
+    (41, [57, 60, 65]), (50, [57, 62, 65]), (40, [59, 64, 68]), (45, [60, 64, 69]),
+]
+WINTER_TUNE = [
+    [81, 0, 76, 72, 76, 0, 81, 84], [84, 81, 77, 0, 72, 0, 77, 81],
+    [79, 0, 76, 79, 84, 0, 79, 76], [74, 79, 83, 0, 81, 79, 74, 0],
+    [76, 81, 0, 84, 88, 0, 84, 81], [82, 0, 77, 74, 77, 0, 82, 86],
+    [84, 81, 77, 0, 81, 84, 81, 0], [80, 76, 71, 0, 76, 0, 80, 0],
+    [77, 0, 74, 0, 69, 0, 77, 81], [79, 0, 74, 0, 71, 0, 79, 83],
+    [84, 0, 79, 0, 76, 0, 79, 84], [81, 0, 76, 0, 72, 0, 76, 81],
+    [84, 81, 77, 0, 84, 81, 77, 0], [86, 81, 77, 0, 74, 77, 81, 0],
+    [80, 83, 80, 76, 71, 76, 80, 0], [81, 0, 76, 72, 81, 0, 76, 0],
 ]
 
 
@@ -179,8 +238,12 @@ def jingle(name, notes):
 
 
 if __name__ == '__main__':
-    score('breezy_plaza', 110, LOBBY_CHORDS, LOBBY_TUNE)
-    score('splash_rally', 134, MATCH_CHORDS, MATCH_TUNE, match=True)
+    for name, tempo, chords, melody, style in (
+        ('bubble_plaza', 114, LOBBY_CHORDS, LOBBY_TUNE, 'lobby'),
+        ('village_dash', 136, VILLAGE_CHORDS, VILLAGE_TUNE, 'village'),
+        ('frost_hop', 126, WINTER_CHORDS, WINTER_TUNE, 'winter'),
+    ):
+        score(name, tempo, chords + chords[:8], melody + melody[:8], style)
     cue('place', .19, [(0,.12,860,316,.38),(.054,.13,590,975,.19)])
     cue('throw', .29, [(0,.19,410,1190,.29),(.12,.15,940,410,.25)], .09)
     cue('splash', .35, [(0,.17,280,97,.29),(.041,.118,910,447,.16),(.152,.15,776,503,.13)], .55)
