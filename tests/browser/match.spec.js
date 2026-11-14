@@ -274,12 +274,14 @@ test('wizard alternates both boots and the contact pose when moving up', async (
   await expect.poll(() => network.state()?.players[0].y).toBeGreaterThan(3.13);
   await page.keyboard.up('ArrowDown');
   await page.keyboard.down('ArrowUp');
-  await expect.poll(() => page.evaluate(() => window.wizardPoses)).toEqual(
-    expect.arrayContaining(['north-settle', 'north', 'north-other'])
-  );
+  await expect.poll(() => page.evaluate(() => {
+    const poses = window.wizardPoses;
+    return poses.some((pose, index) => pose === 'north-settle' && (
+      poses[index - 1] === 'north' && poses[index + 1] === 'north-other' ||
+      poses[index - 1] === 'north-other' && poses[index + 1] === 'north'
+    ));
+  })).toBe(true);
   await page.keyboard.up('ArrowUp');
-  const phases = await page.evaluate(() => window.wizardPoses);
-  expect(phases.indexOf('north')).toBeLessThan(phases.indexOf('north-other'));
   if (process.env.CAPTURE_QA) await page.screenshot({ path: `${process.env.CAPTURE_QA}/iphone-rear.png` });
 });
 
