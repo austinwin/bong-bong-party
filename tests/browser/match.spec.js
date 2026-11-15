@@ -258,7 +258,9 @@ test('short phone keeps the board, joystick and sound within reach', async ({ pa
   test.skip(info.project.name !== 'iphone-webkit', 'Checks the small WebKit portrait and landscape viewports.');
   await page.setViewportSize({ width: 320, height: 568 });
   await page.goto('/');
+  await expect(page.getByRole('button', { name: 'Tập chơi' })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Tập chơi' })).toBeInViewport({ ratio: 1 });
+  await expect(page.locator('#audioSettings')).toBeInViewport({ ratio: 1 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(320);
   const touchTargets = await page.locator('.lobby-actions button').evaluateAll(buttons => buttons.map(button => {
     const { width, height } = button.getBoundingClientRect();

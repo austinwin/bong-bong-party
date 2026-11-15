@@ -476,8 +476,12 @@ kbd { display: inline-block; padding: 2px 4px; border: 1px solid #476776; border
 }
 @media (max-width: 360px) {
   .brand { font-size: 13px; }
-  .header-actions .blue-button { padding-inline: 6px; }
+  .header-actions { min-width: 0; }
+  .header-actions .connection { flex: none; }
+  .header-actions .blue-button { min-width: 44px; padding-inline: 6px; }
+  .header-actions #audioLabel { min-width: 0; white-space: normal; text-align: start; }
   .room-columns, .room-row { grid-template-columns: 59px minmax(0, 1fr) 61px 44px; padding-inline: 5px; }
+  .join-form button { padding-inline: 7px; gap: 5px; }
   .lobby-actions button { font-size: 12px; }
   .lobby-actions img { width: 19px; height: 19px; }
   .clock-face, .people-icon { display: none; }
