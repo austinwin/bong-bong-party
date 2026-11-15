@@ -418,8 +418,10 @@ kbd { display: inline-block; padding: 2px 4px; border: 1px solid #476776; border
   .brand { font-size: 15px; gap: 6px; }
   .brand-icon { width: 33px; height: 33px; border-radius: 9px; }
   .brand img { width: 28px; }
-  .header-actions { gap: 6px; }
-  .connection { font-size: 0; line-height: 1; }
+  .header-actions { min-width: 0; gap: 6px; }
+  .header-actions .audio-button { min-width: 44px; }
+  .header-actions #audioLabel { min-width: 0; white-space: normal; text-align: start; }
+  .connection { flex: none; font-size: 0; line-height: 1; }
   .connection::before { margin-right: 0; }
   .lobby-art { min-height: clamp(107px, 30.5vw, 148px); margin-bottom: 10px; border-radius: 16px; }
   .lobby-art-copy { width: 66%; padding: 13px 0 15px 12px; }
@@ -476,10 +478,7 @@ kbd { display: inline-block; padding: 2px 4px; border: 1px solid #476776; border
 }
 @media (max-width: 360px) {
   .brand { font-size: 13px; }
-  .header-actions { min-width: 0; }
-  .header-actions .connection { flex: none; }
-  .header-actions .blue-button { min-width: 44px; padding-inline: 6px; }
-  .header-actions #audioLabel { min-width: 0; white-space: normal; text-align: start; }
+  .header-actions .blue-button { padding-inline: 6px; }
   .room-columns, .room-row { grid-template-columns: 59px minmax(0, 1fr) 61px 44px; padding-inline: 5px; }
   .join-form button { padding-inline: 7px; gap: 5px; }
   .lobby-actions button { font-size: 12px; }
